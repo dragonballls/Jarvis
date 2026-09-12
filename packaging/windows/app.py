@@ -386,7 +386,7 @@ def main() -> None:
         wait_for_port(UI_HOST, UI_PORT, timeout=10.0)
         log("Jarvis services ready; opening desktop window")
         webview.create_window("Jarvis", f"http://{UI_HOST}:{UI_PORT}/", width=1440, height=900, min_size=(1050, 700), resizable=True, text_select=True)
-        webview.start(gui="winforms", debug=False)
+        webview.start(gui="edgechromium", debug=False)
     finally:
         log("Jarvis desktop window closed")
 
