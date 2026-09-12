@@ -106,14 +106,7 @@ def _initialize_archive_workspace(workspace: Path) -> None:
     git = shutil.which("git.exe") or shutil.which("git")
     if not git:
         raise RuntimeError("Git is required for Jarvis self-coding verification.")
-    result = subprocess.run(
-        [git, "init"],
-        cwd=workspace,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    result = subprocess.run([git, "init"], cwd=workspace, check=False, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "git init failed")
     for args in (
@@ -122,14 +115,7 @@ def _initialize_archive_workspace(workspace: Path) -> None:
         [git, "add", "-A"],
         [git, "commit", "-m", "Jarvis bootstrap baseline"],
     ):
-        result = subprocess.run(
-            args,
-            cwd=workspace,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
+        result = subprocess.run(args, cwd=workspace, check=False, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "Git bootstrap command failed")
     log("Self-coding workspace initialized with a local Git baseline")
@@ -144,10 +130,7 @@ def _archive_workspace(workspace: Path) -> None:
         with urlopen(request, timeout=60) as response:
             archive_path.write_bytes(response.read())
         with zipfile.ZipFile(archive_path) as archive:
-            bad = [
-                name for name in archive.namelist()
-                if Path(name).is_absolute() or Path(name).drive or ".." in Path(name).parts
-            ]
+            bad = [name for name in archive.namelist() if Path(name).is_absolute() or Path(name).drive or ".." in Path(name).parts]
             if bad:
                 raise RuntimeError("GitHub source archive contained an unsafe path")
             archive.extractall(extracted)
@@ -167,11 +150,9 @@ def prepare_self_coding_workspace() -> Path:
     workspace = self_coding_workspace()
     if (workspace / ".git").is_dir() and (workspace / "agent").is_dir():
         return workspace
-
     workspace.parent.mkdir(parents=True, exist_ok=True)
     if workspace.exists():
         shutil.rmtree(workspace, ignore_errors=True)
-
     try:
         log(f"Preparing self-coding workspace: {workspace}")
         if not _git_clone_workspace(workspace):
@@ -208,10 +189,8 @@ def start_static_server(port: int = UI_PORT) -> ThreadingHTTPServer:
     dist = dist_root()
     if not dist.is_dir() or not (dist / "index.html").is_file():
         raise RuntimeError(f"Frontend bundle missing: {dist / 'index.html'}")
-
     def handler(*args, **kwargs):
         return QuietHandler(*args, directory=str(dist), **kwargs)
-
     server = ThreadingHTTPServer((UI_HOST, port), handler)
     thread = threading.Thread(target=server.serve_forever, name="jarvis-static", daemon=True)
     thread.start()
@@ -227,7 +206,6 @@ async def _api_server() -> None:
     from hypercorn.asyncio import serve
     from hypercorn.config import Config
     from desktop.api_server import app
-
     config = Config()
     config.bind = [f"{API_HOST}:{API_PORT}"]
     config.accesslog = None
@@ -244,7 +222,6 @@ def run_api_server_thread() -> threading.Thread:
             asyncio.run(_api_server())
         except Exception:
             log("API server crashed:\n" + traceback.format_exc())
-
     thread = threading.Thread(target=runner, name="jarvis-api", daemon=True)
     thread.start()
     return thread
@@ -285,7 +262,6 @@ def arm_smoke_watchdog(seconds: float = SMOKE_WATCHDOG_SECONDS) -> None:
     def expire() -> None:
         log(f"smoke-test watchdog expired after {seconds:.0f} seconds")
         hard_exit(2)
-
     timer = threading.Timer(seconds, expire)
     timer.daemon = True
     timer.start()
@@ -327,26 +303,14 @@ def install_startup() -> None:
     try:
         import winreg
         exe = Path(sys.executable).resolve()
-        with winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER,
-            r"Software\Microsoft\Windows\CurrentVersion\Run",
-            0,
-            winreg.KEY_SET_VALUE,
-        ) as key:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE) as key:
             winreg.SetValueEx(key, "Jarvis", 0, winreg.REG_SZ, f'"{exe}" --startup')
     except OSError:
         pass
 
 
 def _workspace_is_clean(workspace: Path, git: str) -> bool:
-    result = subprocess.run(
-        [git, "status", "--porcelain", "--untracked-files=all"],
-        cwd=workspace,
-        capture_output=True,
-        text=True,
-        timeout=15,
-        check=False,
-    )
+    result = subprocess.run([git, "status", "--porcelain", "--untracked-files=all"], cwd=workspace, capture_output=True, text=True, timeout=15, check=False)
     return result.returncode == 0 and not result.stdout.strip()
 
 
@@ -355,16 +319,7 @@ def _restart_after_update() -> None:
     env["JARVIS_UPDATED_RESTART"] = "1"
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
     try:
-        subprocess.Popen(
-            [str(Path(sys.executable).resolve()), *sys.argv[1:]],
-            cwd=str(active_workspace() or ROOT),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=creationflags,
-            close_fds=True,
-            env=env,
-        )
+        subprocess.Popen([str(Path(sys.executable).resolve()), *sys.argv[1:]], cwd=str(active_workspace() or ROOT), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags, close_fds=True, env=env)
         hard_exit(0)
     except OSError as exc:
         log(f"Automatic restart after update failed: {exc}")
@@ -377,50 +332,26 @@ def _auto_update_loop(workspace: Path) -> None:
     if not git:
         log("Auto-update disabled: Git was not found on PATH.")
         return
-
     while True:
         time.sleep(AUTO_UPDATE_INTERVAL)
         try:
             if not _workspace_is_clean(workspace, git):
                 log("Auto-update paused: self-coding workspace has local changes.")
                 continue
-
-            fetch = subprocess.run(
-                [git, "fetch", "origin", "main", "--prune"],
-                cwd=workspace,
-                capture_output=True,
-                text=True,
-                timeout=60,
-                check=False,
-            )
+            fetch = subprocess.run([git, "fetch", "origin", "main", "--prune"], cwd=workspace, capture_output=True, text=True, timeout=60, check=False)
             if fetch.returncode != 0:
                 log("Auto-update fetch failed; retaining the current Jarvis version.")
                 continue
-
-            local = subprocess.run(
-                [git, "rev-parse", "HEAD"], cwd=workspace, capture_output=True, text=True, timeout=15, check=False
-            ).stdout.strip()
-            remote = subprocess.run(
-                [git, "rev-parse", "origin/main"], cwd=workspace, capture_output=True, text=True, timeout=15, check=False
-            ).stdout.strip()
+            local = subprocess.run([git, "rev-parse", "HEAD"], cwd=workspace, capture_output=True, text=True, timeout=15, check=False).stdout.strip()
+            remote = subprocess.run([git, "rev-parse", "origin/main"], cwd=workspace, capture_output=True, text=True, timeout=15, check=False).stdout.strip()
             if not local or not remote or local == remote:
                 continue
-
             log(f"Auto-update detected main change: {local[:12]} -> {remote[:12]}.")
             updater = workspace / "scripts" / "update.py"
             if not updater.is_file():
                 log("Auto-update skipped: updater script is missing from the workspace.")
                 continue
-
-            result = subprocess.run(
-                [sys.executable, str(updater), "--build"],
-                cwd=workspace,
-                capture_output=True,
-                text=True,
-                timeout=900,
-                check=False,
-                env=os.environ.copy(),
-            )
+            result = subprocess.run([sys.executable, str(updater), "--build"], cwd=workspace, capture_output=True, text=True, timeout=900, check=False, env=os.environ.copy())
             if result.returncode == 0:
                 log("Jarvis source and frontend update completed; restarting onto the updated workspace.")
                 _restart_after_update()
@@ -438,17 +369,13 @@ def main() -> None:
         smoke_test()
         log("smoke-test completed")
         hard_exit(0)
-
     if "--api-server" in sys.argv:
         run_api_process()
         return
-
     if not (ROOT / "desktop" / "dist" / "index.html").exists():
         raise SystemExit(f"Jarvis frontend bundle is missing: {ROOT / 'desktop' / 'dist' / 'index.html'}")
-
     workspace = prepare_self_coding_workspace()
     os.environ["JARVIS_WORKSPACE"] = str(workspace)
-
     import webview
     install_startup()
     start_static_server()
@@ -458,16 +385,8 @@ def main() -> None:
         wait_for_port(API_HOST, API_PORT, timeout=30.0)
         wait_for_port(UI_HOST, UI_PORT, timeout=10.0)
         log("Jarvis services ready; opening desktop window")
-        webview.create_window(
-            "Jarvis",
-            f"http://{UI_HOST}:{UI_PORT}/",
-            width=1440,
-            height=900,
-            min_size=(1050, 700),
-            resizable=True,
-            text_select=True,
-        )
-        webview.start(debug=False)
+        webview.create_window("Jarvis", f"http://{UI_HOST}:{UI_PORT}/", width=1440, height=900, min_size=(1050, 700), resizable=True, text_select=True)
+        webview.start(gui="winforms", debug=False)
     finally:
         log("Jarvis desktop window closed")
 
