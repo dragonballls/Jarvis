@@ -70,12 +70,12 @@ def jarvis_pyinstaller_args(name: str, windowed: bool, onefile: bool, distpath: 
         "--workpath", str(workpath),
         "--paths", str(ROOT),
         "--add-data", f"{DIST}{separator}desktop/dist",
-        # pywebview needs its runtime data/backend modules. Its own hook is
-        # preferable to recursively collecting every project package.
+        # pywebview runtime data and dynamic Windows backends.
         "--collect-all", "webview",
-        # The Windows WinForms backend is provided by pythonnet. The clr
-        # hidden import is required for PyInstaller to bundle Python.Runtime.dll.
         "--hidden-import", "clr",
+        "--hidden-import", "webview.platforms.edgechromium",
+        "--hidden-import", "webview.platforms.winforms",
+        "--hidden-import", "webview.platforms.win32",
         # These packages are discovered dynamically at runtime. Project
         # modules imported normally by Agent/API do not need blanket
         # collection, avoiding the dependency explosion seen previously.
@@ -85,6 +85,9 @@ def jarvis_pyinstaller_args(name: str, windowed: bool, onefile: bool, distpath: 
         "--collect-submodules", "providers",
         "--hidden-import", "desktop.api_server",
         "--hidden-import", "desktop",
+        # Android is irrelevant to the Windows executable and causes a
+        # harmless but noisy missing-module warning during collection.
+        "--exclude-module", "webview.platforms.android",
     ]
 
     for module in OPTIONAL_LOCAL_ML:
