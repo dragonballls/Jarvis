@@ -351,7 +351,13 @@ def _auto_update_loop(workspace: Path) -> None:
             if not updater.is_file():
                 log("Auto-update skipped: updater script is missing from the workspace.")
                 continue
-            result = subprocess.run([sys.executable, str(updater), "--build"], cwd=workspace, capture_output=True, text=True, timeout=900, check=False, env=os.environ.copy())
+            updater_python = sys.executable
+            if getattr(sys, "frozen", False):
+                updater_python = shutil.which("python.exe") or shutil.which("python") or shutil.which("py.exe") or shutil.which("py")
+                if not updater_python:
+                    log("Auto-update skipped: no external Python interpreter is available.")
+                    continue
+            result = subprocess.run([updater_python, str(updater), "--build"], cwd=workspace, capture_output=True, text=True, timeout=900, check=False, env=os.environ.copy())
             if result.returncode == 0:
                 log("Jarvis source and frontend update completed; restarting onto the updated workspace.")
                 _restart_after_update()
