@@ -14,11 +14,11 @@ from packaging.windows.app import (
     API_HOST,
     API_PORT,
     _auto_update_loop,
-    active_workspace,
     install_startup,
     log,
     prepare_self_coding_workspace,
     run_api_server_thread,
+    wait_for_port,
 )
 
 
@@ -50,7 +50,7 @@ def _post_autopilot(goal: str, workspace: Path | None) -> None:
         log("Self-coding startup task failed:\n" + traceback.format_exc())
 
 
-def _post_chat(message: str, workspace: Path | None, session_id: str) -> list[str]:
+def _post_chat(message: str, session_id: str) -> list[str]:
     payload = json.dumps({
         "message": message,
         "session_id": session_id,
@@ -87,7 +87,7 @@ def run_native_ui(workspace: Path) -> None:
     text_font = tkfont.Font(family="Segoe UI", size=11)
     response_font = tkfont.Font(family="Segoe UI", size=10)
 
-    status = tk.StringVar(value="Jarvis online")
+    status = tk.StringVar(value="Jarvis online — self-coding active")
     entry = tk.Entry(
         root,
         bg="#181818",
@@ -120,7 +120,7 @@ def run_native_ui(workspace: Path) -> None:
 
         def worker() -> None:
             try:
-                chunks = _post_chat(message, workspace, session_id)
+                chunks = _post_chat(message, session_id)
                 events.put(("response", "".join(chunks).strip() or "Done."))
             except Exception as exc:
                 events.put(("error", str(exc)))
@@ -156,6 +156,8 @@ def main() -> None:
     os.environ["JARVIS_WORKSPACE"] = str(workspace)
     install_startup()
     run_api_server_thread()
+    wait_for_port(API_HOST, API_PORT, timeout=30.0)
+
     threading.Thread(
         target=_auto_update_loop,
         args=(workspace,),
@@ -163,9 +165,7 @@ def main() -> None:
         daemon=True,
     ).start()
 
-    # Start the autonomous self-coding loop immediately. It works through the
-    # same authenticated API and workspace used by the chat bar, so progress
-    # is preserved in Git even if the UI is closed.
+    # Start autonomous self-coding only after the API is actually listening.
     threading.Thread(
         target=_post_autopilot,
         args=(
