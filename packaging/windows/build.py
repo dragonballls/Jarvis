@@ -17,7 +17,7 @@ OPTIONAL_LOCAL_ML = (
     "transformers", "transformers.*", "scipy", "scipy.*", "pandas", "pandas.*",
     "sklearn", "sklearn.*", "tensorflow", "tensorflow.*", "keras", "keras.*",
     "matplotlib", "matplotlib.*", "nltk", "nltk.*", "IPython", "IPython.*",
-    "sympy", "sympy.*",
+    "sympy", "sympy.*", "pkg_resources",
 )
 
 
