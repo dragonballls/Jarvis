@@ -7,37 +7,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / "build" / "windows"
 DIST = ROOT / "desktop" / "dist"
-ENTRY = ROOT / "packaging" / "windows" / "app.py"
-
+ENTRY = ROOT / "packaging" / "windows" / "native_app.py"
 
 # Jarvis is a cloud-first assistant. These optional local-ML stacks are not
 # required by the packaged chat/self-coding runtime and can make PyInstaller
 # consume several GB of RAM while analyzing the dependency graph.
 OPTIONAL_LOCAL_ML = (
-    "sentence_transformers",
-    "sentence_transformers.*",
-    "torch",
-    "torch.*",
-    "transformers",
-    "transformers.*",
-    "scipy",
-    "scipy.*",
-    "pandas",
-    "pandas.*",
-    "sklearn",
-    "sklearn.*",
-    "tensorflow",
-    "tensorflow.*",
-    "keras",
-    "keras.*",
-    "matplotlib",
-    "matplotlib.*",
-    "nltk",
-    "nltk.*",
-    "IPython",
-    "IPython.*",
-    "sympy",
-    "sympy.*",
+    "sentence_transformers", "sentence_transformers.*", "torch", "torch.*",
+    "transformers", "transformers.*", "scipy", "scipy.*", "pandas", "pandas.*",
+    "sklearn", "sklearn.*", "tensorflow", "tensorflow.*", "keras", "keras.*",
+    "matplotlib", "matplotlib.*", "nltk", "nltk.*", "IPython", "IPython.*",
+    "sympy", "sympy.*",
 )
 
 
@@ -48,11 +28,8 @@ def run(*args: str) -> None:
 
 def current_commit() -> str:
     result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True,
+        text=True, check=False,
     )
     return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else "dev"
 
@@ -60,69 +37,39 @@ def current_commit() -> str:
 def jarvis_pyinstaller_args(name: str, windowed: bool, onefile: bool, distpath: Path, workpath: Path) -> list[str]:
     separator = ";"
     args = [
-        "pyinstaller",
-        "--noconfirm",
-        "--clean",
+        "pyinstaller", "--noconfirm", "--clean",
         "--windowed" if windowed else "--console",
-        "--name", name,
-        "--onefile" if onefile else "--onedir",
-        "--distpath", str(distpath),
-        "--workpath", str(workpath),
+        "--name", name, "--onefile" if onefile else "--onedir",
+        "--distpath", str(distpath), "--workpath", str(workpath),
         "--paths", str(ROOT),
-        "--add-data", f"{DIST}{separator}desktop/dist",
-        # pywebview runtime data and dynamic Windows backends.
-        "--collect-all", "webview",
-        "--hidden-import", "clr",
-        "--hidden-import", "webview.platforms.edgechromium",
-        "--hidden-import", "webview.platforms.winforms",
-        "--hidden-import", "webview.platforms.win32",
-        # These packages are discovered dynamically at runtime. Project
-        # modules imported normally by Agent/API do not need blanket
-        # collection, avoiding the dependency explosion seen previously.
         "--collect-submodules", "agent",
         "--collect-submodules", "integrations",
         "--collect-submodules", "plugins",
         "--collect-submodules", "providers",
         "--hidden-import", "desktop.api_server",
         "--hidden-import", "desktop",
-        # Android is irrelevant to the Windows executable and causes a
-        # harmless but noisy missing-module warning during collection.
-        "--exclude-module", "webview.platforms.android",
+        "--hidden-import", "tkinter",
+        "--hidden-import", "tkinter.font",
     ]
 
+    if (ROOT / "prompts").exists():
+        args += ["--add-data", f"{ROOT / 'prompts'}{separator}prompts"]
+    args.append(str(ENTRY))
     for module in OPTIONAL_LOCAL_ML:
         args += ["--exclude-module", module]
-
-    prompts = ROOT / "prompts"
-    if prompts.exists():
-        args += ["--add-data", f"{prompts}{separator}prompts"]
-    args.append(str(ENTRY))
     return args
 
 
 def main() -> None:
     if not DIST.joinpath("index.html").is_file():
         raise SystemExit("desktop/dist/index.html is missing; run npm run build first")
-
     if BUILD.exists():
         shutil.rmtree(BUILD)
     BUILD.mkdir(parents=True, exist_ok=True)
-
-    # Build only the user-facing executable. The old second smoke executable
-    # duplicated the entire dependency-analysis pass and could double memory
-    # pressure. The packaged Jarvis executable has its own --smoke-test mode.
     exe = BUILD / "Jarvis.exe"
-    run(*jarvis_pyinstaller_args(
-        "Jarvis",
-        True,
-        True,
-        BUILD,
-        ROOT / "build" / "pyinstaller-work",
-    ))
-
+    run(*jarvis_pyinstaller_args("Jarvis", True, True, BUILD, ROOT / "build" / "pyinstaller-work"))
     if not exe.is_file():
         raise SystemExit(f"PyInstaller did not create {exe}")
-
     (BUILD / "VERSION").write_text(current_commit() + "\n", encoding="utf-8")
     print(f"Windows Jarvis app ready: {exe}")
 
