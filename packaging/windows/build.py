@@ -73,6 +73,9 @@ def jarvis_pyinstaller_args(name: str, windowed: bool, onefile: bool, distpath: 
         # pywebview needs its runtime data/backend modules. Its own hook is
         # preferable to recursively collecting every project package.
         "--collect-all", "webview",
+        # The Windows WinForms backend is provided by pythonnet. The clr
+        # hidden import is required for PyInstaller to bundle Python.Runtime.dll.
+        "--hidden-import", "clr",
         # These packages are discovered dynamically at runtime. Project
         # modules imported normally by Agent/API do not need blanket
         # collection, avoiding the dependency explosion seen previously.
