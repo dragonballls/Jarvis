@@ -100,7 +100,7 @@ def load_provider_config() -> dict[str, Any]:
             "api_key": "",
             "base_url": "https://opencode.ai/zen/v1",
             "model": "mimo-v2.5-free",
-            "fallback_provider": "openrouter",
+            "fallback_provider": "groq",
             "timeout": 60,
             "temperature": 0.2,
             "max_tokens": 8192,
@@ -108,12 +108,25 @@ def load_provider_config() -> dict[str, Any]:
         },
     )
 
+    cfg.setdefault(
+        "groq",
+        {
+            "api_key": "",
+            "base_url": "https://api.groq.com/openai/v1",
+            "model": "qwen/qwen3.8-27b",
+            "timeout": 60,
+            "temperature": 0.2,
+            "max_tokens": 8192,
+            "provider_name": "groq",
+        },
+    )
     # Override API keys from environment variables. Secrets never need to be
     # committed to the repository; user-level environment variables are preferred.
     env_map = {
         "openai": ("api_key", "OPENAI_API_KEY"),
         "openrouter": ("api_key", "OPENROUTER_API_KEY"),
         "zen_coder": ("api_key", "ZEN_CODER_API_KEY"),
+        "groq": ("api_key", "GROQ_API_KEY"),
     }
     for section, (field, env_var) in env_map.items():
         if section in cfg:
