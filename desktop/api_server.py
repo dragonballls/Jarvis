@@ -25,7 +25,8 @@ _API_SECRET = os.environ.get("API_SECRET", "")
 _MAX_MESSAGE_LENGTH = 10_000
 _MAX_TTS_LENGTH = 8_000
 _DEFAULT_TTS_VOICE_ID = "6WwXjDDEMyNmFG95zycZ"
-_DEFAULT_TTS_MODEL = "eleven_flash_v2_5"
+_DEFAULT_TTS_MODEL = "eleven_v3_conversational"
+_TTS_FALLBACK_MODEL = "eleven_flash_v2_5"
 
 
 def require_auth(f):
@@ -69,12 +70,21 @@ def _tts_model_id() -> str:
     return os.environ.get("JARVIS_TTS_MODEL_ID", _DEFAULT_TTS_MODEL).strip() or _DEFAULT_TTS_MODEL
 
 
-def _prepare_tts_text(text: str) -> str:
-    """Shape ordinary assistant text for a calm, precise British-assistant delivery."""
+def _tts_float_env(name: str, default: float, minimum: float, maximum: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return min(max(float(raw), minimum), maximum)
+    except ValueError:
+        return default
+
+
+def _prepare_tts_text(text: str, model_id: str | None = None) -> str:
+    """Shape ordinary assistant text for calm, precise British-assistant delivery."""
     value = re.sub(r"\s+", " ", text.replace("\r", " ").replace("\n", " ")).strip()
     if not value:
         return value
-    # Give common abbreviations a spoken form without changing the visible assistant text.
     replacements = {
         r"\bAI\b": "A.I.",
         r"\bAPI\b": "A.P.I.",
@@ -87,8 +97,15 @@ def _prepare_tts_text(text: str) -> str:
     }
     for pattern, replacement in replacements.items():
         value = re.sub(pattern, replacement, value)
-    # Avoid overly clipped delivery when several clauses are joined by punctuation.
     value = re.sub(r"\s*[;]\s*", "; ", value)
+    # Eleven v3 Conversational accepts natural-language audio tags. Keep them sparse so
+    # the assistant stays composed rather than sounding theatrically over-directed.
+    if model_id == "eleven_v3_conversational":
+        lowered = value.lower()
+        if any(marker in lowered for marker in ("warning:", "critical:", "danger:", "error:")):
+            value = f"[serious] {value}"
+        elif value.endswith("?"):
+            value = f"[curious] {value}"
     return value
 
 
@@ -262,7 +279,18 @@ async def test_providers():
 @require_auth
 async def voice_status():
     configured = bool(os.environ.get("ELEVENLABS_API_KEY", "").strip() or get_key("elevenlabs"))
-    return jsonify({"provider": "elevenlabs", "configured": configured, "voice_id_configured": bool(_tts_voice_id()), "voice_id": _tts_voice_id(), "voice_name": "Eldrin - Crisp British Baritone", "model_id": _tts_model_id(), "fallback": "browser-speech-synthesis"})
+    model_id = _tts_model_id()
+    return jsonify({
+        "provider": "elevenlabs",
+        "configured": configured,
+        "voice_id_configured": bool(_tts_voice_id()),
+        "voice_id": _tts_voice_id(),
+        "voice_name": "Eldrin - Crisp British Baritone",
+        "model_id": model_id,
+        "fallback_model_id": _TTS_FALLBACK_MODEL,
+        "fallback": "browser-speech-synthesis",
+        "voice_profile": "calm, precise, restrained British baritone",
+    })
 
 
 @app.route(f"{API_PREFIX}/voice/synthesize", methods=["POST"])
@@ -272,9 +300,7 @@ async def voice_synthesize():
     text = data.get("text", "")
     if not isinstance(text, str) or not text.strip():
         return jsonify({"error": "text is required"}), 422
-    text = _prepare_tts_text(text)
-    if len(text) > _MAX_TTS_LENGTH:
-        return jsonify({"error": f"text exceeds {_MAX_TTS_LENGTH} characters"}), 422
+
     api_key = os.environ.get("ELEVENLABS_API_KEY", "").strip() or get_key("elevenlabs")
     if not api_key:
         return jsonify({"error": "ElevenLabs is not configured"}), 503
@@ -282,23 +308,58 @@ async def voice_synthesize():
     import urllib.error
     import urllib.parse
     import urllib.request
-    payload = json.dumps({"text": text, "model_id": _tts_model_id(), "voice_settings": {"stability": 0.68, "similarity_boost": 0.86, "style": 0.08, "use_speaker_boost": True, "speed": 0.94}}).encode("utf-8")
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{urllib.parse.quote(_tts_voice_id(), safe='')}?output_format=mp3_44100_128"
-    req = urllib.request.Request(url, data=payload, method="POST", headers={"xi-api-key": api_key, "Content-Type": "application/json", "Accept": "audio/mpeg"})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as upstream:
-            audio = upstream.read()
-    except urllib.error.HTTPError as exc:
+
+    primary_model = _tts_model_id()
+    models_to_try = [primary_model]
+    if primary_model != _TTS_FALLBACK_MODEL:
+        models_to_try.append(_TTS_FALLBACK_MODEL)
+
+    last_detail = "ElevenLabs request failed"
+    for index, model_id in enumerate(models_to_try):
+        prepared_text = _prepare_tts_text(text, model_id)
+        model_limit = 5_000 if model_id == "eleven_v3" else _MAX_TTS_LENGTH
+        if len(prepared_text) > model_limit:
+            return jsonify({"error": f"text exceeds {model_limit} characters for {model_id}"}), 422
+
+        stability = _tts_float_env("JARVIS_TTS_STABILITY", 0.58, 0.0, 1.0)
+        similarity = _tts_float_env("JARVIS_TTS_SIMILARITY", 0.88, 0.0, 1.0)
+        style = _tts_float_env("JARVIS_TTS_STYLE", 0.06, 0.0, 1.0)
+        speed = _tts_float_env("JARVIS_TTS_SPEED", 0.95, 0.7, 1.2)
+        voice_settings = {
+            "stability": stability,
+            "similarity_boost": similarity,
+            "style": style,
+            "use_speaker_boost": True,
+            "speed": speed,
+        }
+        payload = json.dumps({"text": prepared_text, "model_id": model_id, "voice_settings": voice_settings}).encode("utf-8")
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{urllib.parse.quote(_tts_voice_id(), safe='')}?output_format=mp3_44100_128"
+        req = urllib.request.Request(url, data=payload, method="POST", headers={"xi-api-key": api_key, "Content-Type": "application/json", "Accept": "audio/mpeg"})
         try:
-            detail = exc.read().decode("utf-8", errors="replace")
-        except Exception:
-            detail = "ElevenLabs request failed"
-        return jsonify({"error": detail[:500]}), 502
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        return jsonify({"error": f"ElevenLabs request failed: {exc}"}), 502
-    response = Response(audio, mimetype="audio/mpeg")
-    response.headers["Cache-Control"] = "no-store"
-    return response
+            with urllib.request.urlopen(req, timeout=30) as upstream:
+                audio = upstream.read()
+            if not audio:
+                raise OSError("ElevenLabs returned empty audio")
+            response = Response(audio, mimetype="audio/mpeg")
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Jarvis-TTS-Model"] = model_id
+            response.headers["X-Jarvis-TTS-Profile"] = "expressive-realtime"
+            if index > 0:
+                response.headers["X-Jarvis-TTS-Fallback"] = "true"
+            return response
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                detail = "ElevenLabs request failed"
+            last_detail = detail[:500]
+            # A model/voice capability error should automatically recover to Flash 2.5.
+            if index == 0 and exc.code not in {400, 404, 405, 415, 422}:
+                return jsonify({"error": last_detail}), 502
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            return jsonify({"error": f"ElevenLabs request failed: {exc}"}), 502
+
+    return jsonify({"error": last_detail}), 502
 
 
 @app.route(f"{API_PREFIX}/health")
