@@ -5,6 +5,7 @@ from collections.abc import Generator
 from pathlib import Path
 
 from core.opencode_agent import run_coding_agent
+from self_coding.ecosystem import discover, format_report
 from self_coding.git_boundary import record_verified_change
 
 
@@ -82,7 +83,7 @@ def _verify(workspace: Path) -> Generator[dict, None, bool]:
 
 
 def run_evolution_cycle(workspace: Path, goal: str) -> Generator[dict, None, None]:
-    """Run an EMRG-style bounded self-improvement cycle."""
+    """Run an EMRG-style bounded self-improvement cycle with ecosystem discovery."""
     workspace = workspace.resolve()
     yield {"type": "autopilot", "event": "evolution", "stage": "prepare", "stages": list(STAGES)}
 
@@ -99,16 +100,39 @@ def run_evolution_cycle(workspace: Path, goal: str) -> Generator[dict, None, Non
         return
 
     yield {"type": "autopilot", "event": "evolution", "stage": "review", "status": "clean_worktree"}
-    yield {"type": "autopilot", "event": "evolution", "stage": "discover", "status": "delegating_to_agent"}
+
+    try:
+        candidates = discover(goal)
+        report = format_report(candidates)
+    except Exception as exc:
+        candidates = []
+        report = f"External ecosystem discovery unavailable: {exc}"
+
+    yield {
+        "type": "autopilot",
+        "event": "evolution",
+        "stage": "discover",
+        "status": "ecosystem_scan_complete",
+        "candidates": len(candidates),
+        "report": report,
+    }
 
     prompt = (
         "Perform one controlled Jarvis self-improvement cycle. Follow this sequence: "
-        "prepare, review the repository and its tests, discover the highest-value "
-        "safe improvement, implement only that improvement, verify it, and summarize "
-        "the result. Preserve existing functionality. Never modify secrets, credentials, "
-        "unrelated files, or system settings. Do not install or invoke a local LLM. "
-        "Only use remote AI. Do not commit or push changes yourself; return the workspace "
-        "with the verified modifications for Jarvis's isolated Git recording boundary.\n\nGOAL:\n" + goal
+        "prepare, review the repository and its tests, use the external ecosystem "
+        "discovery report to identify useful projects or forks, then discover the "
+        "highest-value safe improvement, implement only that improvement, verify it, "
+        "and summarize the result. Preserve existing functionality. You may inspect "
+        "public repositories or forks and selectively adapt useful ideas, patterns, "
+        "or code when their license permits and the change fits Jarvis. Never blindly "
+        "copy an entire repository. Do not execute untrusted external repository code. "
+        "Treat dependencies, scripts, credentials, and system changes as high risk. "
+        "Do not create or publish forks automatically; use a fork only when it is "
+        "necessary and explicitly supported by an authenticated GitHub workflow. "
+        "Never modify secrets, credentials, unrelated files, or system settings. "
+        "Do not install or invoke a local LLM. Only use remote AI. Do not commit or "
+        "push changes yourself; return the workspace with verified modifications for "
+        "Jarvis's isolated Git recording boundary.\n\nGOAL:\n" + goal + "\n\n" + report
     )
 
     yield {"type": "autopilot", "event": "evolution", "stage": "improve"}
