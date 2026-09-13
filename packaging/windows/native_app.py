@@ -3,19 +3,60 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import traceback
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-from packaging.windows.app import (
-    API_HOST,
-    API_PORT,
-    _auto_update_loop,
-    install_startup,
-    log,
-    prepare_self_coding_workspace,
-    run_api_server_thread,
-    wait_for_port,
-)
+# Keep heavyweight runtime imports out of module import time. This lets the
+# packaged executable create a diagnostic log before loading the API stack.
+API_HOST = "127.0.0.1"
+API_PORT = 8080
+_auto_update_loop = None
+install_startup = None
+log = None
+prepare_self_coding_workspace = None
+run_api_server_thread = None
+wait_for_port = None
+
+
+def _bootstrap_log(message: str) -> None:
+    """Write an early diagnostic line before the runtime module is imported."""
+    paths = []
+    try:
+        paths.append(Path(sys.executable).resolve().parent / "jarvis.log")
+    except Exception:
+        pass
+    try:
+        paths.append(Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Jarvis" / "jarvis.log")
+    except Exception:
+        pass
+    line = message.rstrip() + "\n"
+    for path in paths:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(line)
+            return
+        except OSError:
+            continue
+
+
+def _load_runtime() -> None:
+    global API_HOST, API_PORT, _auto_update_loop, install_startup, log
+    global prepare_self_coding_workspace, run_api_server_thread, wait_for_port
+    _bootstrap_log("Jarvis runtime bootstrap: loading packaging.windows.app")
+    from packaging.windows import app as runtime
+
+    API_HOST = runtime.API_HOST
+    API_PORT = runtime.API_PORT
+    _auto_update_loop = runtime._auto_update_loop
+    install_startup = runtime.install_startup
+    log = runtime.log
+    prepare_self_coding_workspace = runtime.prepare_self_coding_workspace
+    run_api_server_thread = runtime.run_api_server_thread
+    wait_for_port = runtime.wait_for_port
+    _bootstrap_log("Jarvis runtime bootstrap: packaging.windows.app loaded")
+
 
 _MUTEX_HANDLE = None
 
@@ -36,13 +77,7 @@ def _acquire_single_instance() -> bool:
 
 
 def smoke_test() -> None:
-    """Run a fast packaged-runtime check without opening the user interface.
-
-    Heavy optional agent imports are verified by the integration workflow; the
-    packaged smoke test intentionally focuses on process startup and the API
-    health contract so packaging failures are not confused with dependency
-    initialization time.
-    """
+    """Run a fast packaged-runtime check without opening the user interface."""
     log("Jarvis smoke test starting")
     run_api_server_thread()
     wait_for_port(API_HOST, API_PORT, timeout=30.0)
@@ -69,8 +104,6 @@ def _post_autopilot(goal: str, workspace: Path | None) -> None:
             if event.get("event"):
                 log(f"SELF-CODING EVENT: {event}")
     except Exception:
-        import traceback
-
         log("Self-coding startup task failed:\n" + traceback.format_exc())
 
 
@@ -178,6 +211,7 @@ def run_native_ui(workspace: Path) -> None:
 
 
 def main() -> None:
+    _load_runtime()
     if "--smoke-test" in os.sys.argv:
         smoke_test()
         return
@@ -214,9 +248,12 @@ def main() -> None:
 
 if __name__ == "__main__":
     try:
+        import sys
+        if "--smoke-test" in sys.argv:
+            _bootstrap_log("Jarvis smoke-test bootstrap starting")
         main()
     except Exception:
-        import traceback
-
-        log(traceback.format_exc())
+        _bootstrap_log("Jarvis native app failed during bootstrap:\n" + traceback.format_exc())
+        if log is not None:
+            log(traceback.format_exc())
         raise
