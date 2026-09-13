@@ -15,7 +15,7 @@ ENTRY = ROOT / "packaging" / "windows" / "native_app.py"
 OPTIONAL_LOCAL_ML = (
     "sentence_transformers", "sentence_transformers.*", "torch", "torch.*",
     "transformers", "transformers.*", "scipy", "scipy.*", "pandas", "pandas.*",
-    "sklearn", "sklearn.*", "tensorflow", "tensorflow.*", "keras", "keras.*",
+    "tensorflow", "tensorflow.*", "keras", "keras.*",
     "matplotlib", "matplotlib.*", "nltk", "nltk.*", "IPython", "IPython.*",
     "sympy", "sympy.*", "pkg_resources",
 )
