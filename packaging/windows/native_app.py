@@ -11,7 +11,8 @@ from pathlib import Path
 from tkinter import font as tkfont
 from urllib.request import Request, urlopen
 
-from core.opencode_agent import openhands_available, run_coding_agent
+from agent.evolution import run_evolution_cycle
+from core.opencode_agent import openhands_available
 from packaging.windows.app import (
     API_HOST,
     API_PORT,
@@ -76,10 +77,12 @@ def _post_autopilot(goal: str, workspace: Path | None) -> None:
         log("Self-coding stopped: workspace is unavailable")
         return
     try:
-        for event in run_coding_agent(workspace, goal):
-            content = str(event.get("content") or event.get("error") or "")
+        for event in run_evolution_cycle(workspace, goal):
+            content = str(event.get("content") or event.get("error") or event.get("output") or "")
             if content:
                 log(f"SELF-CODING: {content.rstrip()}")
+            if event.get("event"):
+                log(f"SELF-CODING EVENT: {event}")
     except Exception:
         log("Self-coding startup task failed:\n" + traceback.format_exc())
 
@@ -204,14 +207,14 @@ def main() -> None:
     threading.Thread(
         target=_post_autopilot,
         args=(
-            "Begin autonomous self-coding. Inspect the Jarvis repository, choose the highest-value safe improvements, implement them, run tests and verification, preserve prior work, commit valid changes to GitHub main when verification passes, and continue improving the system safely.",
+            "Begin autonomous self-coding. Inspect the Jarvis repository, choose the highest-value safe improvement, implement it, run focused and relevant verification, preserve prior work, and only record verified changes. Keep every integration and future addition in its own isolated component boundary while allowing narrow interfaces between components.",
             workspace,
         ),
         name="jarvis-self-coding",
         daemon=True,
     ).start()
 
-    log("Jarvis native desktop UI ready; autonomous coding started")
+    log("Jarvis native desktop UI ready; guarded autonomous coding started")
     run_native_ui(workspace)
 
 
