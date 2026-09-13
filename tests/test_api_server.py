@@ -1,3 +1,11 @@
+"""Tests for the minimal Jarvis API server (desktop/api_server.py).
+
+The server deliberately exposes only the core surface: conversation,
+self-coding autopilot, and health. Every other endpoint is disabled in
+minimal mode, so the tests here assert both the live surface and the
+"Disabled in minimal Jarvis mode" guard.
+"""
+
 import sys
 from pathlib import Path
 
@@ -10,25 +18,16 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 
 @pytest.fixture
-def app(monkeypatch):
-    monkeypatch.setattr("core.registry.discover_plugins", lambda: None)
-    monkeypatch.setattr("desktop.api_server._proactive", None)
-    import tempfile
+def api(monkeypatch):
+    import desktop.api_server as module
 
-    from core.automations import AutomationEngine
+    monkeypatch.setattr(module, "_API_SECRET", "test-secret")
+    module._agents.clear()
+    return module
 
-    tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
-    tmp.close()
-    fresh_engine = AutomationEngine(file_path=tmp.name)
-    monkeypatch.setattr("core.automations.get_automation_engine", lambda: fresh_engine)
-    sys.modules.pop("desktop.api_server", None)
-    import importlib
 
-    import desktop.api_server as api
-
-    importlib.reload(api)
-    api._API_SECRET = "test-secret"
-    api._FRONTEND_ORIGIN = "http://localhost:5173"
+@pytest.fixture
+def app(api):
     return api.app
 
 
@@ -44,12 +43,39 @@ class TestHealth:
             data = await resp.get_json()
         assert resp.status_code == 200
         assert data["status"] == "ok"
+        assert data["mode"] == "minimal"
+        assert data["features"] == ["conversation", "self_coding"]
+        assert data["name"] == "Jarvis"
 
-    async def test_health_returns_sessions(self, app):
+    async def test_health_does_not_require_auth(self, app):
         async with app.test_client() as client:
             resp = await client.get("/api/v1/health")
-            data = await resp.get_json()
-        assert "sessions" in data
+        assert resp.status_code == 200
+
+
+class TestAuth:
+    async def test_chat_rejects_missing_key(self, app):
+        async with app.test_client() as client:
+            resp = await client.post("/api/v1/chat", json={"message": "hello"})
+        assert resp.status_code == 401
+
+    async def test_chat_rejects_wrong_key(self, app):
+        async with app.test_client() as client:
+            resp = await client.post(
+                "/api/v1/chat", json={"message": "hello"}, headers={"X-API-Key": "wrong"}
+            )
+        assert resp.status_code == 401
+
+    async def test_chat_accepts_correct_key(self, app, headers, monkeypatch):
+        class FakeAgent:
+            def run(self, message):
+                yield {"type": "done", "content": f"reply:{message}", "final": True}
+
+        monkeypatch.setattr("desktop.api_server.get_agent", lambda session_id="default": FakeAgent())
+        async with app.test_client() as client:
+            resp = await client.post("/api/v1/chat", json={"message": "hello"}, headers=headers)
+        assert resp.status_code == 200
+        assert resp.mimetype == "text/event-stream"
 
 
 class TestChat:
@@ -58,506 +84,179 @@ class TestChat:
             resp = await client.post("/api/v1/chat", json={}, headers=headers)
         assert resp.status_code == 422
 
-    async def test_chat_empty_message_rejected(self, app, headers):
+    async def test_chat_rejects_empty_message(self, app, headers):
         async with app.test_client() as client:
-            resp = await client.post("/api/v1/chat", json={"message": ""}, headers=headers)
+            resp = await client.post("/api/v1/chat", json={"message": "   "}, headers=headers)
         assert resp.status_code == 422
 
-    async def test_chat_long_message_rejected(self, app, headers):
+    async def test_chat_rejects_non_string_message(self, app, headers):
         async with app.test_client() as client:
-            resp = await client.post("/api/v1/chat", json={"message": "x" * 10001}, headers=headers)
+            resp = await client.post("/api/v1/chat", json={"message": 42}, headers=headers)
         assert resp.status_code == 422
 
-    async def test_chat_returns_event_stream(self, app, headers):
+    async def test_chat_rejects_oversized_message(self, app, headers):
+        async with app.test_client() as client:
+            resp = await client.post(
+                "/api/v1/chat", json={"message": "x" * 10001}, headers=headers
+            )
+        assert resp.status_code == 422
+
+    async def test_chat_streams_agent_events(self, app, headers, monkeypatch):
+        class FakeAgent:
+            def run(self, message):
+                yield {"type": "delta", "content": f"reply:{message}"}
+                yield {"type": "done", "content": "ok", "final": True}
+
+        monkeypatch.setattr("desktop.api_server.get_agent", lambda session_id="default": FakeAgent())
         async with app.test_client() as client:
             resp = await client.post("/api/v1/chat", json={"message": "hello"}, headers=headers)
+            body = await resp.get_data(as_text=True)
         assert resp.status_code == 200
         assert resp.mimetype == "text/event-stream"
+        assert "reply:hello" in body
+        assert '"final": true' in body
+
+    async def test_chat_streams_error_when_agent_crashes(self, app, headers, monkeypatch):
+        class BoomAgent:
+            def run(self, message):
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr("desktop.api_server.get_agent", lambda session_id="default": BoomAgent())
+        async with app.test_client() as client:
+            resp = await client.post("/api/v1/chat", json={"message": "hello"}, headers=headers)
+            body = await resp.get_data(as_text=True)
+        assert resp.status_code == 200
+        assert "Error: boom" in body
+        assert '"final": true' in body
+
+    async def test_chat_session_isolation(self, app, headers, monkeypatch):
+        runs: list[str] = []
+
+        class FakeAgent:
+            def run(self, message):
+                runs.append(message)
+                yield {"type": "done", "content": "ok", "final": True}
+
+        monkeypatch.setattr("desktop.api_server.get_agent", lambda session_id="default": FakeAgent())
+        async with app.test_client() as client:
+            await client.post("/api/v1/chat", json={"message": "one"}, headers=headers)
+            await client.post("/api/v1/chat", json={"message": "two"}, headers=headers)
+        assert runs == ["one", "two"]
 
 
-class TestSessions:
-    async def test_list_sessions_empty(self, app, headers):
+class TestAutopilot:
+    async def test_requires_goal(self, app, headers):
+        async with app.test_client() as client:
+            resp = await client.post("/api/v1/autopilot", json={}, headers=headers)
+        assert resp.status_code == 422
+
+    async def test_rejects_blank_goal(self, app, headers):
+        async with app.test_client() as client:
+            resp = await client.post("/api/v1/autopilot", json={"goal": "  "}, headers=headers)
+        assert resp.status_code == 422
+
+    async def test_rejects_invalid_workspace(self, app, headers):
+        async with app.test_client() as client:
+            resp = await client.post(
+                "/api/v1/autopilot",
+                json={"goal": "improve Jarvis", "workspace": "../escape"},
+                headers=headers,
+            )
+        assert resp.status_code == 422
+
+    async def test_streams_self_coding_path(self, api, app, headers, monkeypatch):
+        monkeypatch.setattr(api, "is_self_coding_goal", lambda goal: True)
+        monkeypatch.setattr(
+            api,
+            "run_coding_agent",
+            lambda workspace, goal: iter(
+                [
+                    {"type": "autopilot", "event": "plan", "goal": goal},
+                    {"type": "done", "content": "completed", "final": True},
+                ]
+            ),
+        )
+        async with app.test_client() as client:
+            resp = await client.post(
+                "/api/v1/autopilot",
+                json={"goal": "improve itself", "workspace": "/tmp/workspace"},
+                headers=headers,
+            )
+            body = await resp.get_data(as_text=True)
+        assert resp.status_code == 200
+        assert resp.mimetype == "text/event-stream"
+        assert '"event": "plan"' in body
+        assert '"final": true' in body
+
+    async def test_streams_regular_autopilot_path(self, api, app, headers, monkeypatch):
+        class FakeAutopilotAgent:
+            def run_autopilot(self, goal, workspace):
+                yield {"type": "progress", "content": goal}
+                yield {"type": "done", "content": "finished", "final": True}
+
+        monkeypatch.setattr(api, "is_self_coding_goal", lambda goal: False)
+        monkeypatch.setattr(api, "get_agent", lambda session_id="default": FakeAutopilotAgent())
+        async with app.test_client() as client:
+            resp = await client.post(
+                "/api/v1/autopilot",
+                json={"goal": "greet me", "workspace": "/tmp/workspace"},
+                headers=headers,
+            )
+            body = await resp.get_data(as_text=True)
+        assert resp.status_code == 200
+        assert '"content": "greet me"' in body
+        assert "finished" in body
+
+    async def test_streams_error_when_self_coding_crashes(self, api, app, headers, monkeypatch):
+        def crash(workspace, goal):
+            raise RuntimeError("autopilot failure")
+
+        monkeypatch.setattr(api, "is_self_coding_goal", lambda goal: True)
+        monkeypatch.setattr(api, "run_coding_agent", crash)
+        async with app.test_client() as client:
+            resp = await client.post(
+                "/api/v1/autopilot",
+                json={"goal": "improve itself", "workspace": "/tmp/workspace"},
+                headers=headers,
+            )
+            body = await resp.get_data(as_text=True)
+        assert resp.status_code == 200
+        assert "Self-coding error: autopilot failure" in body
+        assert '"final": true' in body
+
+
+class TestMinimalSurface:
+    async def test_disabled_endpoint_returns_404(self, app, headers):
         async with app.test_client() as client:
             resp = await client.get("/api/v1/sessions", headers=headers)
             data = await resp.get_json()
-        assert resp.status_code == 200
-        assert data["sessions"] == []
+        assert resp.status_code == 404
+        assert data["error"] == "Disabled in minimal Jarvis mode"
 
-    async def test_create_session(self, app, headers):
+    async def test_disabled_endpoint_is_safe_without_auth(self, app):
         async with app.test_client() as client:
-            resp = await client.post("/api/v1/sessions", json={"language": "english"}, headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 201
-        assert "session_id" in data
-        assert data["language"] == "english"
-
-    async def test_create_session_invalid_language(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.post("/api/v1/sessions", json={"language": "french"}, headers=headers)
-        assert resp.status_code == 422
-
-    async def test_delete_session(self, app, headers):
-        async with app.test_client() as client:
-            create = await client.post("/api/v1/sessions", json={"language": "english"}, headers=headers)
-            sid = (await create.get_json())["session_id"]
-            resp = await client.delete(f"/api/v1/sessions/{sid}", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert data["status"] == "deleted"
-
-    async def test_delete_nonexistent_session(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.delete("/api/v1/sessions/nonexistent", headers=headers)
+            resp = await client.get("/api/v1/sessions")
         assert resp.status_code == 404
 
-
-class TestMetrics:
-    async def test_metrics_endpoint(self, app, headers):
+    async def test_options_preflight(self, app):
         async with app.test_client() as client:
-            resp = await client.get("/api/v1/metrics", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert "llm_calls" in data
-
-
-class TestSystemInfo:
-    async def test_system_info(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/system-info", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert "hostname" in data
-        assert "os" in data
-
-
-class TestOutputDir:
-    async def test_get_default_output_dir(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/output-dir?session_id=default", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert "output_dir" in data
-
-    async def test_set_output_dir(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.put(
-                "/api/v1/output-dir", json={"session_id": "default", "path": "/tmp/friday_output"}, headers=headers
-            )
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert data["status"] == "ok"
-
-    async def test_set_output_dir_traversal_rejected(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.put(
-                "/api/v1/output-dir", json={"session_id": "default", "path": "../etc/passwd"}, headers=headers
-            )
-        assert resp.status_code == 422
-
-
-class TestMemory:
-    async def test_memory_list(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/memory", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert "vector_memories" in data
-
-    async def test_memory_search_empty(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.post("/api/v1/memory/search", json={"query": ""}, headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert data["count"] == 0
-
-    async def test_memory_search(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.post("/api/v1/memory/search", json={"query": "test"}, headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert "results" in data
-
-    async def test_memory_clear(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.delete("/api/v1/memory", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert data["success"] is True
-
-
-class TestKnowledgeGraph:
-    async def test_knowledge_list(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/knowledge", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert "entities" in data
-
-    async def test_knowledge_store_requires_text(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.post("/api/v1/knowledge", json={}, headers=headers)
-        assert resp.status_code == 422
-
-    async def test_knowledge_store_and_query(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.post("/api/v1/knowledge", json={"text": "the beta orb and Sarah"}, headers=headers)
-            data = await resp.get_json()
-            assert resp.status_code == 200
-            assert data["count"] >= 0
-
-            resp2 = await client.post("/api/v1/knowledge/query", json={"term": "sarah"}, headers=headers)
-            data2 = await resp2.get_json()
-        assert resp2.status_code == 200
-        assert any(r["name"].lower() == "sarah" for r in data2["results"])
-
-    async def test_knowledge_continuity(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/knowledge/continuity", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert "continuity" in data
-
-
-class TestComputerControl:
-    async def test_computer_status(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/computer/status", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert "platform" in data
-        assert "mouse_keyboard" in data
-
-    async def test_computer_windows(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/computer/windows", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert "windows" in data
-
-    async def test_computer_summary(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/computer/summary", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert "available" in data
-        assert "windows" in data
-
-
-class TestPluginMarketplace:
-    async def test_list_plugins(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/plugins", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert "plugins" in data
-        assert len(data["plugins"]) > 0
-
-    async def test_install_missing_plugin(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.post("/api/v1/plugins/install", headers=headers, json={"name": "__nope__"})
-        assert resp.status_code == 404
-
-    async def test_install_requires_name(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.post("/api/v1/plugins/install", headers=headers, json={})
-        assert resp.status_code == 422
-
-
-class TestTools:
-    async def test_list_tools(self, app, headers, monkeypatch):
-        monkeypatch.setattr(
-            "core.registry.get_tool_definitions",
-            lambda: [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "search_web",
-                        "description": "Search the web",
-                        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
-                    },
+            resp = await client.options(
+                "/api/v1/chat",
+                headers={
+                    "Origin": "http://127.0.0.1:5173",
+                    "Access-Control-Request-Method": "POST",
                 },
-                {"type": "function", "function": {"name": "capture_screen", "description": "Screenshot"}},
-            ],
-        )
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/tools", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert data["count"] == 2
-        assert [t["name"] for t in data["tools"]] == ["capture_screen", "search_web"]
-        assert data["tools"][1]["parameters"]["properties"]["query"]["type"] == "string"
-        assert data["tools"][0]["parameters"] == {}
-
-    async def test_list_tools_empty(self, app, headers, monkeypatch):
-        monkeypatch.setattr("core.registry.get_tool_definitions", list)
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/tools", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert data == {"tools": [], "count": 0}
-
-
-class TestCliArgs:
-    async def test_defaults(self, app):
-        import desktop.api_server as api
-
-        args = api.parse_args([])
-        assert (args.host, args.port) == ("127.0.0.1", 8080)
-
-    async def test_flags_override_defaults(self, app):
-        import desktop.api_server as api
-
-        args = api.parse_args(["--host", "0.0.0.0", "--port", "9000"])
-        assert (args.host, args.port) == ("0.0.0.0", 9000)
-
-    async def test_env_vars_used_as_defaults(self, app, monkeypatch):
-        import desktop.api_server as api
-
-        monkeypatch.setenv("FRIDAY_HOST", "0.0.0.0")
-        monkeypatch.setenv("FRIDAY_PORT", "9100")
-        args = api.parse_args([])
-        assert (args.host, args.port) == ("0.0.0.0", 9100)
-
-    async def test_out_of_range_port_rejected(self, app):
-        import desktop.api_server as api
-
-        with pytest.raises(SystemExit):
-            api.parse_args(["--port", "70000"])
-
-
-class TestCustomTools:
-    async def test_list_custom_tools(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/tools/custom", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert "tools" in data
-
-    async def test_create_requires_description(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.post("/api/v1/tools/custom", headers=headers, json={})
-        assert resp.status_code == 422
-
-
-class TestRag:
-    async def test_search_requires_query(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.post("/api/v1/rag/search", headers=headers, json={})
-        assert resp.status_code == 422
-
-    async def test_ingest_requires_text(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.post("/api/v1/rag/ingest", headers=headers, json={"title": "x"})
-        assert resp.status_code == 422
-
-
-class TestPrivacy:
-    async def test_privacy_status(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/privacy", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert "enabled" in data
-        assert "local_provider" in data
-
-    async def test_privacy_toggle(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.post("/api/v1/privacy", headers=headers, json={"enabled": True})
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert data["enabled"] is True
-
-
-class TestAutomations:
-    async def test_list_automations_empty(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/automations", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert data["automations"] == []
-
-    async def test_create_automation(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.post(
-                "/api/v1/automations",
-                json={
-                    "name": "Daily Briefing",
-                    "trigger_type": "cron",
-                    "trigger_config": {"cron": "0 8 * * *"},
-                    "action": "briefing",
-                },
-                headers=headers,
             )
-            data = await resp.get_json()
-        assert resp.status_code == 201
-        assert data["name"] == "Daily Briefing"
-        assert data["trigger_type"] == "cron"
-
-    async def test_create_automation_invalid(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.post(
-                "/api/v1/automations",
-                json={
-                    "name": "",
-                    "trigger_type": "invalid",
-                    "action": "",
-                },
-                headers=headers,
-            )
-        assert resp.status_code == 422
-
-    async def test_get_automation(self, app, headers):
-        async with app.test_client() as client:
-            create = await client.post(
-                "/api/v1/automations",
-                json={
-                    "name": "Test",
-                    "trigger_type": "event",
-                    "trigger_config": {},
-                    "action": "notification",
-                },
-                headers=headers,
-            )
-            aid = (await create.get_json())["id"]
-            resp = await client.get(f"/api/v1/automations/{aid}", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert data["name"] == "Test"
-
-    async def test_get_automation_not_found(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/automations/nonexistent", headers=headers)
-        assert resp.status_code == 404
-
-    async def test_update_automation(self, app, headers):
-        async with app.test_client() as client:
-            create = await client.post(
-                "/api/v1/automations",
-                json={
-                    "name": "Original",
-                    "trigger_type": "cron",
-                    "trigger_config": {"cron": "0 9 * * *"},
-                    "action": "notification",
-                },
-                headers=headers,
-            )
-            aid = (await create.get_json())["id"]
-            resp = await client.put(f"/api/v1/automations/{aid}", json={"name": "Updated"}, headers=headers)
-            data = await resp.get_json()
-        assert data["name"] == "Updated"
-
-    async def test_delete_automation(self, app, headers):
-        async with app.test_client() as client:
-            create = await client.post(
-                "/api/v1/automations",
-                json={
-                    "name": "ToDelete",
-                    "trigger_type": "event",
-                    "trigger_config": {},
-                    "action": "notification",
-                },
-                headers=headers,
-            )
-            aid = (await create.get_json())["id"]
-            resp = await client.delete(f"/api/v1/automations/{aid}", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert data["status"] == "deleted"
-
-    async def test_toggle_automation(self, app, headers):
-        async with app.test_client() as client:
-            create = await client.post(
-                "/api/v1/automations",
-                json={
-                    "name": "ToggleMe",
-                    "trigger_type": "cron",
-                    "trigger_config": {"cron": "* * * * *"},
-                    "action": "notification",
-                },
-                headers=headers,
-            )
-            aid = (await create.get_json())["id"]
-            resp = await client.post(f"/api/v1/automations/{aid}/toggle", headers=headers)
-            data = await resp.get_json()
-        assert data["enabled"] is False
-
-    async def test_trigger_automation(self, app, headers):
-        async with app.test_client() as client:
-            create = await client.post(
-                "/api/v1/automations",
-                json={
-                    "name": "TriggerMe",
-                    "trigger_type": "event",
-                    "trigger_config": {},
-                    "action": "notification",
-                    "action_params": {"message": "hello"},
-                },
-                headers=headers,
-            )
-            aid = (await create.get_json())["id"]
-            resp = await client.post(f"/api/v1/automations/{aid}/trigger", headers=headers)
-            data = await resp.get_json()
-        assert data["type"] == "notification"
-
-
-class TestAlerts:
-    async def test_alerts_list(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/alerts", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert "alerts" in data
-
-
-class TestVision:
-    async def test_vision_analyze_no_image(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.post("/api/v1/vision/analyze", json={}, headers=headers)
-        assert resp.status_code == 422
-
-    async def test_vision_screen(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/vision/screen", headers=headers)
         assert resp.status_code == 200
 
 
-class TestApprovals:
-    async def test_list_approvals_empty(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/approvals", headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert data["approvals"] == []
+async def test_validation_helpers():
+    import desktop.api_server as api
 
-    async def test_resolve_unknown_approval_404(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.post("/api/v1/approvals/nope", json={"allowed": True}, headers=headers)
-        assert resp.status_code == 404
-
-    async def test_resolve_approval(self, app, headers):
-        from core.security import get_approval_registry
-
-        request_id = get_approval_registry().request("delete_file", {"path": "x"})
-        async with app.test_client() as client:
-            resp = await client.post(f"/api/v1/approvals/{request_id}", json={"allowed": True}, headers=headers)
-            data = await resp.get_json()
-        assert resp.status_code == 200
-        assert data["allowed"] is True
-        assert get_approval_registry().wait(request_id, timeout=0.1) is True
-
-
-class TestAuth:
-    async def test_unauthorized_without_key(self, app):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/metrics")
-        assert resp.status_code == 401
-
-    async def test_authorized_with_correct_key(self, app, headers):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/metrics", headers=headers)
-        assert resp.status_code == 200
-
-    async def test_health_does_not_require_auth(self, app):
-        async with app.test_client() as client:
-            resp = await client.get("/api/v1/health")
-        assert resp.status_code == 200
+    assert api.validate_chat_input({}) == "message cannot be empty"
+    assert api.validate_chat_input({"message": 1}) == "message must be a string"
+    assert api.validate_chat_input({"message": "ok"}) is None
+    assert api.validate_workspace(None) is None
+    assert api.validate_workspace("/safe") is None
+    assert api.validate_workspace("../escape") == "invalid workspace path"
+    assert api.validate_workspace("~/x") == "invalid workspace path"

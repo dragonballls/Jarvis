@@ -14,7 +14,8 @@ from quart import Quart, jsonify, make_response, request
 from quart_cors import cors
 
 from agent.core import Agent
-from agent.self_coding_runtime import is_self_coding_goal, run_self_coding
+from agent.self_coding_runtime import is_self_coding_goal
+from core.opencode_agent import run_coding_agent
 
 API_PREFIX = "/api/v1"
 MINIMAL_MODE = True
@@ -155,7 +156,18 @@ async def autopilot():
         def run_agent():
             try:
                 if is_self_coding_goal(goal):
-                    events = run_self_coding(agent, goal, workspace)
+                    if not workspace:
+                        events = iter(
+                            [
+                                {
+                                    "type": "error",
+                                    "content": "Self-coding requires an explicit workspace path.",
+                                    "final": True,
+                                }
+                            ]
+                        )
+                    else:
+                        events = run_coding_agent(Path(workspace), goal)
                 else:
                     events = agent.run_autopilot(goal, workspace)
                 for event in events:

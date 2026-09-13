@@ -99,8 +99,8 @@ class TestAutopilot:
         monkeypatch.setattr(api, "is_self_coding_goal", lambda goal: True)
         monkeypatch.setattr(
             api,
-            "run_self_coding",
-            lambda agent, goal, workspace: iter(
+            "run_coding_agent",
+            lambda workspace, goal: iter(
                 [
                     {"type": "progress", "content": "started"},
                     {"type": "done", "content": "completed", "final": True},
@@ -118,6 +118,26 @@ class TestAutopilot:
         assert response.mimetype == "text/event-stream"
         assert "started" in body
         assert "completed" in body
+
+    async def test_self_coding_requires_workspace(self, api, headers, monkeypatch):
+        monkeypatch.setattr(api, "is_self_coding_goal", lambda goal: True)
+        monkeypatch.delenv("JARVIS_WORKSPACE", raising=False)
+        monkeypatch.delenv("FRIDAY_WORKSPACE", raising=False)
+
+        def unexpected(workspace, goal):
+            raise AssertionError("run_coding_agent must not be called without a workspace")
+
+        monkeypatch.setattr(api, "run_coding_agent", unexpected)
+        async with api.app.test_client() as client:
+            response = await client.post(
+                "/api/v1/autopilot",
+                json={"goal": "improve itself"},
+                headers=headers,
+            )
+            body = await response.get_data(as_text=True)
+        assert response.status_code == 200
+        assert "requires an explicit workspace path" in body
+        assert '"final": true' in body
 
 
 class TestMinimalSurface:
@@ -140,7 +160,7 @@ class TestMinimalSurface:
         assert response.status_code == 200
 
 
-def test_validation_helpers():
+async def test_validation_helpers():
     import desktop.api_server as api
 
     assert api.validate_chat_input({}) == "message cannot be empty"
