@@ -147,6 +147,8 @@ export function connectEventSource(
   let dropTimer: ReturnType<typeof setTimeout> | null = null
   let retryDelay = 1000
   let reportedOffline = false
+  let connected = false
+  let generation = 0
 
   const clearDropTimer = () => {
     if (dropTimer) {
@@ -155,39 +157,52 @@ export function connectEventSource(
     }
   }
 
+  const scheduleRetry = () => {
+    if (stopped || retryTimer) return
+    const delay = retryDelay
+    retryDelay = Math.min(retryDelay * 2, 30000)
+    retryTimer = setTimeout(() => {
+      retryTimer = null
+      connect()
+    }, delay)
+  }
+
   const connect = () => {
     if (stopped) return
-    if (source) source.close()
+    const currentGeneration = ++generation
+    const previous = source
+    if (previous) previous.close()
+    connected = false
     source = new EventSource(`${API_BASE}/events`)
-    source.onmessage = (message) => {
+    const current = source
+
+    current.onmessage = (message) => {
+      if (stopped || currentGeneration !== generation) return
       try { onEvent(JSON.parse(message.data)) } catch {}
     }
-    source.onopen = () => {
+    current.onopen = () => {
+      if (stopped || currentGeneration !== generation) return
+      connected = true
       retryDelay = 1000
       clearDropTimer()
       reportedOffline = false
       onStatus?.(true)
     }
-    source.onerror = () => {
-      source?.close()
+    current.onerror = () => {
+      if (stopped || currentGeneration !== generation) return
+      connected = false
+      current.close()
       source = null
       clearDropTimer()
       if (!reportedOffline) {
         dropTimer = setTimeout(() => {
-          if (stopped || source) return
+          if (stopped || connected || currentGeneration !== generation) return
           reportedOffline = true
           onStatus?.(false)
           onError?.()
         }, 4000)
       }
-      if (!stopped && !retryTimer) {
-        const delay = retryDelay
-        retryDelay = Math.min(retryDelay * 2, 30000)
-        retryTimer = setTimeout(() => {
-          retryTimer = null
-          connect()
-        }, delay)
-      }
+      scheduleRetry()
     }
   }
 
