@@ -178,9 +178,9 @@ class Agent:
         if _is_desktop_goal(goal):
             context.append({"role": "system", "content": _desktop_context()})
 
-        coding_llm = lambda messages, tools=None: llm_chat(
-            messages, tools=tools, provider_name="zen_coder"
-        )
+        def coding_llm(messages, tools=None):
+            return llm_chat(messages, tools=tools, provider_name="zen_coder")
+
         coding_planner = Planner(coding_llm, tool_definitions=self._tool_defs)
         auto = Autopilot(
             planner=coding_planner,
