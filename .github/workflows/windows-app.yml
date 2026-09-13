@@ -19,7 +19,7 @@ on:
       - ".github/workflows/windows-app.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   PYTHON_VERSION: "3.12"
@@ -84,3 +84,18 @@ jobs:
           path: build/windows/Jarvis.exe
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish rolling Windows update
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $commitPath = Join-Path $env:RUNNER_TEMP "jarvis-commit.txt"
+          Set-Content -Path $commitPath -Value "${{ github.sha }}" -NoNewline
+          gh release view latest *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create latest build/windows/Jarvis.exe $commitPath --title "Jarvis latest Windows build" --notes "Automated Windows build for ${{ github.sha }}"
+          } else {
+            gh release upload latest build/windows/Jarvis.exe#Jarvis.exe $commitPath#jarvis-commit.txt --clobber
+            gh release edit latest --title "Jarvis latest Windows build" --notes "Automated Windows build for ${{ github.sha }}"
+          }
