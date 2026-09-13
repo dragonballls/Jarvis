@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { getVoiceStatus, synthesizeVoice } from '../core/api'
 
 export type VoiceOutputStatus = 'idle' | 'speaking' | 'paused'
 
@@ -22,80 +23,118 @@ interface UseVoiceOutputReturn {
 }
 
 const VOICE_STORAGE_KEY = 'friday_tts_voice_uri'
+const ENABLED_STORAGE_KEY = 'friday_voice_output_enabled'
 
 export function useVoiceOutput(): UseVoiceOutputReturn {
-  const [enabled, setEnabled] = useState(() => {
-    const saved = localStorage.getItem('friday_voice_output_enabled')
-    return saved ? saved === 'true' : false
-  })
+  const [enabled, setEnabled] = useState(() => localStorage.getItem(ENABLED_STORAGE_KEY) === 'true')
   const [status, setStatus] = useState<VoiceOutputStatus>('idle')
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
   const [selectedVoice, setSelectedVoiceState] = useState<SpeechSynthesisVoice | null>(null)
+  const [cloudVoiceReady, setCloudVoiceReady] = useState(false)
   const selectedVoiceRef = useRef<SpeechSynthesisVoice | null>(null)
-  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const audioUrlRef = useRef<string | null>(null)
   const speakQueueRef = useRef<{ text: string; options?: SpeakOptions }[]>([])
   const speakingRef = useRef(false)
   const synthRef = useRef<SpeechSynthesis | null>(null)
+  const cloudSpeakingRef = useRef(false)
 
-  const isSupported =
-    typeof window !== 'undefined' && 'speechSynthesis' in window
+  const isSupported = typeof window !== 'undefined' && ('speechSynthesis' in window || 'Audio' in window)
 
-  const processQueue = useCallback(() => {
-    if (speakingRef.current || speakQueueRef.current.length === 0) return
+  const cleanupAudio = useCallback(() => {
+    const audio = audioRef.current
+    if (audio) {
+      audio.onended = null
+      audio.onerror = null
+      audio.pause()
+      audio.src = ''
+    }
+    audioRef.current = null
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current)
+      audioUrlRef.current = null
+    }
+    cloudSpeakingRef.current = false
+  }, [])
+
+  const processBrowserQueue = useCallback(() => {
+    if (cloudVoiceReady || speakingRef.current || speakQueueRef.current.length === 0) return
     const synth = synthRef.current
     if (!synth) return
-
     const item = speakQueueRef.current.shift()!
     speakingRef.current = true
-
     const utterance = new SpeechSynthesisUtterance(item.text)
     if (selectedVoiceRef.current) utterance.voice = selectedVoiceRef.current
     utterance.rate = item.options?.rate ?? 1
     utterance.pitch = item.options?.pitch ?? 1
     utterance.volume = 1
-
     utterance.onstart = () => setStatus('speaking')
     utterance.onend = () => {
       speakingRef.current = false
-      if (speakQueueRef.current.length > 0) {
-        processQueue()
-      } else {
-        setStatus('idle')
-      }
+      if (speakQueueRef.current.length > 0) processBrowserQueue()
+      else setStatus('idle')
     }
-    utterance.onerror = () => {
-      speakingRef.current = false
-      setStatus('idle')
-    }
+    utterance.onerror = () => { speakingRef.current = false; setStatus('idle') }
     utterance.onpause = () => setStatus('paused')
     utterance.onresume = () => setStatus('speaking')
-
-    utteranceRef.current = utterance
     synth.speak(utterance)
-  }, [])
+  }, [cloudVoiceReady])
+
+  const speakWithCloudVoice = useCallback(async (text: string, options?: SpeakOptions) => {
+    if (!cloudVoiceReady) return false
+    cleanupAudio()
+    try {
+      const blob = await synthesizeVoice(text)
+      const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+      audio.playbackRate = options?.rate && options.rate > 0 ? options.rate : 1
+      audioRef.current = audio
+      audioUrlRef.current = url
+      cloudSpeakingRef.current = true
+      setStatus('speaking')
+      audio.onended = () => { cleanupAudio(); setStatus('idle') }
+      audio.onerror = () => { cleanupAudio(); setStatus('idle') }
+      await audio.play()
+      return true
+    } catch {
+      cleanupAudio()
+      return false
+    }
+  }, [cloudVoiceReady, cleanupAudio])
 
   const speak = useCallback((text: string, options?: SpeakOptions) => {
     if (!isSupported || !enabled || !text.trim()) return
+    if (cloudVoiceReady) {
+      void speakWithCloudVoice(text.trim(), options)
+      return
+    }
     speakQueueRef.current.push({ text, options })
-    processQueue()
-  }, [isSupported, enabled, processQueue])
+    processBrowserQueue()
+  }, [isSupported, enabled, cloudVoiceReady, speakWithCloudVoice, processBrowserQueue])
 
   const stop = useCallback(() => {
-    const synth = synthRef.current
-    if (synth) synth.cancel()
+    synthRef.current?.cancel()
+    cleanupAudio()
     speakQueueRef.current = []
     speakingRef.current = false
     setStatus('idle')
-  }, [])
+  }, [cleanupAudio])
 
   const pause = useCallback(() => {
-    const synth = synthRef.current
-    if (synth) synth.pause()
+    if (cloudSpeakingRef.current && audioRef.current) {
+      audioRef.current.pause()
+      setStatus('paused')
+      return
+    }
+    synthRef.current?.pause()
   }, [])
 
   const resume = useCallback(() => {
-    const synth = synthRef.current
-    if (synth) synth.resume()
+    if (cloudSpeakingRef.current && audioRef.current) {
+      void audioRef.current.play().then(() => setStatus('speaking')).catch(() => setStatus('idle'))
+      return
+    }
+    synthRef.current?.resume()
   }, [])
 
   const setVoice = useCallback((voice: SpeechSynthesisVoice) => {
@@ -106,44 +145,48 @@ export function useVoiceOutput(): UseVoiceOutputReturn {
 
   const setEnabledWrapped = useCallback((v: boolean) => {
     setEnabled(v)
-    try { localStorage.setItem('friday_voice_output_enabled', String(v)) } catch {}
-  }, [])
+    try { localStorage.setItem(ENABLED_STORAGE_KEY, String(v)) } catch {}
+    if (!v) stop()
+  }, [stop])
 
   useEffect(() => {
-    if (!isSupported) return
+    if (!isSupported || !('speechSynthesis' in window)) return
     const synth = window.speechSynthesis
     synthRef.current = synth
-
     const loadVoices = () => {
       const v = synth.getVoices()
-      if (v.length > 0) {
-        setVoices(v)
-        const savedURI = localStorage.getItem(VOICE_STORAGE_KEY)
-        if (savedURI) {
-          const match = v.find(vo => vo.voiceURI === savedURI)
-          if (match) {
-            selectedVoiceRef.current = match
-            setSelectedVoiceState(match)
-            return
-          }
-        }
-        if (!selectedVoiceRef.current) {
-          const en = v.find(vo => vo.lang.startsWith('en'))
-          const fallback = en || v[0]
-          selectedVoiceRef.current = fallback
-          setSelectedVoiceState(fallback)
-        }
-      }
+      if (!v.length) return
+      setVoices(v)
+      const savedURI = localStorage.getItem(VOICE_STORAGE_KEY)
+      const match = savedURI ? v.find(vo => vo.voiceURI === savedURI) : null
+      const fallback = match || v.find(vo => vo.lang.toLowerCase().startsWith('en-gb')) || v.find(vo => vo.lang.startsWith('en')) || v[0]
+      selectedVoiceRef.current = fallback
+      setSelectedVoiceState(fallback)
     }
-
     loadVoices()
     synth.addEventListener('voiceschanged', loadVoices)
-    return () => synth.removeEventListener('voiceschanged', loadVoices)
-  }, [isSupported])
+    return () => { synth.removeEventListener('voiceschanged', loadVoices); cleanupAudio() }
+  }, [isSupported, cleanupAudio])
+
+  useEffect(() => {
+    let cancelled = false
+    void getVoiceStatus().then(info => {
+      if (!cancelled) setCloudVoiceReady(info.provider === 'elevenlabs' && info.configured)
+    }).catch(() => { if (!cancelled) setCloudVoiceReady(false) })
+    return () => { cancelled = true }
+  }, [])
 
   return {
-    isSupported, enabled, setEnabled: setEnabledWrapped,
-    status, speak, stop, pause, resume,
-    voices, selectedVoice, setVoice,
+    isSupported,
+    enabled,
+    setEnabled: setEnabledWrapped,
+    status,
+    speak,
+    stop,
+    pause,
+    resume,
+    voices,
+    selectedVoice,
+    setVoice,
   }
 }
