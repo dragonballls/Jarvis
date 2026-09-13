@@ -14,7 +14,8 @@ pyautogui>=0.9.54
 openhands-sdk==1.47.0
 openhands-tools==1.47.0
 browser-use==0.13.10
-emrg @ git+https://github.com/dragonballls/emrg.git@master
+emrg @ git+https://github.com/dragonballls/emrg.git@17b98fb7b66e53dc737cdfdb539566c0d9e56cce
+websockets==15.0.1
 
 # Development
 pytest>=9.1.1
