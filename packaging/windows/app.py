@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import multiprocessing
 import os
 import shutil
@@ -343,26 +344,6 @@ def _workspace_is_clean(workspace: Path, git: str) -> bool:
     return result.returncode == 0 and not result.stdout.strip()
 
 
-def _restart_after_update() -> None:
-    env = os.environ.copy()
-    env["JARVIS_UPDATED_RESTART"] = "1"
-    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
-    try:
-        subprocess.Popen(
-            [str(Path(sys.executable).resolve()), *sys.argv[1:]],
-            cwd=str(active_workspace() or ROOT),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=creationflags,
-            close_fds=True,
-            env=env,
-        )
-        hard_exit(0)
-    except OSError as exc:
-        log(f"Automatic restart after update failed: {exc}")
-
-
 def _auto_update_loop(workspace: Path) -> None:
     if os.environ.get("JARVIS_SMOKE_TEST") == "1" or os.environ.get("JARVIS_UPDATED_RESTART") == "1":
         return
@@ -407,7 +388,7 @@ def _auto_update_loop(workspace: Path) -> None:
             env = os.environ.copy()
             env["JARVIS_AUTO_UPDATE_EXE"] = str(Path(sys.executable).resolve())
             env["JARVIS_AUTO_UPDATE_PARENT_PID"] = str(os.getpid())
-            env["JARVIS_AUTO_UPDATE_ARGS"] = "\0".join(sys.argv[1:])
+            env["JARVIS_AUTO_UPDATE_ARGS"] = json.dumps(sys.argv[1:])
             result = _run_no_window(
                 [updater_python, str(updater), "--update-executable"],
                 cwd=workspace,
