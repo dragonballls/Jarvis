@@ -1,8 +1,68 @@
-# AI Agent Guide for Friday
+# AI Agent Guide for Jarvis
 
-This file instructs AI coding agents (opencode, Claude Code, Cline, Cursor, etc.) how to work effectively with this project.
+This file instructs AI coding agents (OpenHands, OpenCode, Claude Code, Cline, Cursor, and similar tools) how to work safely in this project.
 
-## Quick Start for Agents
+## Core rule: isolate every addition
+
+Every current and future integration, feature, engine, service, updater, runtime, or external component must have its own identifiable boundary before implementation begins.
+
+Do not combine unrelated additions into one mutable lifecycle, installer, updater, workspace, runtime-state directory, or executable. They may coordinate through narrow, explicit interfaces, but they must remain independently testable and diagnosable.
+
+### Required structure for a new integration
+
+For every new integration or subsystem:
+
+1. Give it a unique top-level package/directory when practical.
+2. Give it a component-specific configuration/state namespace; never reuse another component's mutable state.
+3. Give it a component-specific bridge or facade for communication with Jarvis.
+4. Give it dedicated tests that can run without unrelated integrations.
+5. Give its errors/logging a component identifier.
+6. Add a dedicated CI job when the integration is substantial enough to require independent installation, runtime, or compatibility verification.
+7. Keep installation/update/replacement responsibilities inside that component's boundary.
+8. Never silently let one component become responsible for modifying another component's files, binaries, Git checkout, updater manifest, or persistent state.
+
+### Current component boundaries
+
+- `mark53/` — Mark 53 integration boundary only. Read-only bridge; no Mark files, binaries, updater state, or startup management.
+- `mark_updater/` — Mark 53 updater boundary only. Never updates Jarvis or its self-coding workspace.
+- `self_coding/` — Jarvis self-coding facade only. Never replaces `Jarvis.exe` directly.
+- `agent/openhands_runtime.py` — OpenHands runtime adapter only.
+- `core/opencode_agent.py` — coding-engine routing only; OpenHands/OpenCode operate through the self-coding boundary.
+- `agent/evolution.py` — EMRG-style bounded evolution/verification only; no executable updater responsibility.
+- `integrations/gods_eye/` plus God's Eye bridge/context tests — God's Eye only.
+- `providers/`, `config/`, and `core/blackout.py` — provider/routing/privacy behavior only.
+- `scripts/update.py` — Jarvis source/release updater only.
+- `packaging/windows/` — Windows packaging and executable lifecycle only.
+
+## Integration coordination
+
+The supported pattern is:
+
+`Jarvis chat -> self-coding -> verified GitHub change -> Jarvis Windows updater`
+
+Independent external-component patterns are:
+
+`Jarvis -> component bridge -> external component`
+
+and:
+
+`external component -> component-specific updater -> external component installation`
+
+Coordination must not collapse these lifecycles into a shared mutable installation or state directory.
+
+## Verification requirements
+
+Before declaring an addition complete:
+
+- Compile/import the component independently.
+- Run its dedicated tests.
+- Run the relevant existing regression tests.
+- Confirm the component does not require another unrelated component merely to import or initialize.
+- Confirm failure messages identify the component.
+- For packaged/runtime changes, run the applicable packaging or smoke-test path.
+- Do not call an external integration "working" merely because its adapter imports; verify the actual runtime separately when credentials/environment are available.
+
+## Development commands
 
 ### Backend (Python)
 
@@ -10,108 +70,36 @@ This file instructs AI coding agents (opencode, Claude Code, Cline, Cursor, etc.
 pip install -r requirements.txt
 python -m pytest tests/ -v
 python -m pytest tests/ -v --cov
-python -m pytest tests/ --cov --cov-fail-under=50 --ignore=tests/test_api_server.py
-python -m pytest tests/test_api_server.py --cov=desktop --cov-fail-under=40
 ruff check .
 ruff format --check .
-python main.py
-python desktop/api_server.py
 ```
 
-### Frontend (TypeScript/React)
+### Frontend
 
 ```bash
 cd desktop
 npm install
 npm run test
-npm run test:watch
 npm run lint
 npx tsc --noEmit
-npm run dev
 npm run build
 ```
 
-## Key Conventions
+## Coding conventions
 
 ### Commits
 - Conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`, `perf:`, `chore:`, `test:`
-- Imperative mood: "add feature" not "added feature"
-- Branch naming: `feat/your-feature-name`, `fix/`, `docs/`
+- Imperative mood.
+- Use `feat/`, `fix/`, or `docs/` branches when branches are used.
 
-### Code Style
-- **Python:** PEP 8, line length 120, double quotes, Ruff formatter
-- **TypeScript:** Strict mode, named exports, grouped imports (React -> third-party -> local)
-- Use `async/await` for I/O, `asyncio.to_thread` for blocking calls
-- Type hints required on all Python function signatures
+### Python
+PEP 8, 120-character lines, double quotes, Ruff formatting, and type hints on all function signatures.
 
-## Project Structure
-- `core/` — Business logic (executor, memory, proactive, automations, etc.)
-- `desktop/api_server.py` — Quart REST API
-- `desktop/src/` — React/TypeScript frontend
-- `tests/` — Python tests
-- `desktop/src/test/` — TypeScript tests
-- `plugins/` — Tool plugins
-- `providers/` — LLM provider abstraction
+### TypeScript
+Strict mode, named exports, grouped imports, and the existing project lint/type-check configuration.
 
-## Important Architecture Notes
+## Important API/testing notes
 
-### API Server (`desktop/api_server.py`)
-- Uses Quart
-- Module-level code runs at import time: `discover_plugins()`, `_broadcaster = EventBroadcaster()`
-- Tests must patch `core.registry.discover_plugins` and `desktop.api_server._proactive` BEFORE import
-- Persistence uses JSON files
+`desktop/api_server.py` uses Quart and has module-level initialization. Tests that import it must patch the documented dependencies before import. Persistence uses JSON files.
 
-### Testing
-- **Backend:** pytest with `pytest-asyncio` strict mode
-- **Frontend:** Vitest with jsdom environment and Testing Library
-- Python test methods must use `@pytest.mark.asyncio` where required by strict mode
-
-### Linting
-- Python: Ruff
-- TypeScript: oxlint
-
-### LLM Providers
-- Registered via `providers/registry.py`
-- Default: OpenRouter; also supports OpenAI, Ollama, and OpenAI-compatible APIs
-- Config via `config/providers.toml`
-
-## Component Isolation Rule
-
-Every current and future addition must have an identifiable component boundary. Do not combine unrelated additions into one mutable lifecycle, installer, updater, workspace, runtime state directory, or executable.
-
-The current boundaries are:
-
-- `mark53/` — Mark 53 integration boundary only. Read-only bridge; no Mark files, binaries, updater state, or startup management.
-- `mark_updater/` — Mark 53 updater boundary only. Never updates Jarvis or its self-coding workspace.
-- `self_coding/` — Jarvis self-coding facade only. Never replaces `Jarvis.exe` directly.
-- `agent/` OpenHands/OpenCode execution — coding engines only; operate through the self-coding boundary.
-- `core/` EMRG evolution logic — bounded evolution/verification only; do not merge updater responsibilities into it.
-- `integrations/gods_eye/` and related God's Eye bridge/context files — God's Eye only.
-- `providers/`, `config/`, and `core/blackout.py` — provider/routing/privacy behavior only.
-- `scripts/update.py` — Jarvis source/release updater only.
-- `packaging/windows/` — Windows packaging and executable lifecycle only.
-
-A new feature must get its own named directory or explicit subsystem boundary plus component-specific tests. Its errors should identify the component name. Coordination is allowed only through narrow interfaces.
-
-Never make one component responsible for replacing, deleting, or modifying another component's installation, executable, Git checkout, updater manifest, or persistent state.
-
-See `ARCHITECTURE_COMPONENTS.md` for the authoritative component lifecycle map.
-
-## Common Tasks
-
-### Adding an API endpoint
-1. Define route in `desktop/api_server.py`
-2. Add `@require_auth` for authenticated endpoints
-3. Add validation helpers
-4. Write tests
-
-### Adding a tool
-1. Create a plugin class in `plugins/builtins/` or a standalone function in `tools/`
-2. Ensure discovery behavior is preserved
-3. Write tests
-
-### Adding a frontend component
-1. Create the component in `desktop/src/components/<category>/`
-2. Add types in `desktop/src/types/index.ts`
-3. Write tests in `desktop/src/test/`
-4. Use Zustand from `desktop/src/core/`
+See `ARCHITECTURE_COMPONENTS.md` for the authoritative lifecycle map.
