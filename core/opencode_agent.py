@@ -34,7 +34,7 @@ def _run_opencode(
     if not opencode:
         yield {
             "type": "error",
-            "error": "No coding agent is available. Install OpenHands SDK or OpenCode.",
+            "error": "OpenCode CLI was not found on PATH or in %APPDATA%\\npm.",
             "final": True,
         }
         return
@@ -117,21 +117,19 @@ def run_coding_agent(
     model: str = DEFAULT_MODEL,
     timeout: int = 1800,
 ) -> Generator[dict, None, None]:
-    """Run Jarvis's preferred remote coding engine.
-
-    OpenHands is preferred when explicitly selected or when installed and
-    JARVIS_AGENT_ENGINE=auto. OpenCode remains the compatibility fallback.
-    No local model is ever started by this module.
-    """
+    """Run Jarvis's remote coding engine with OpenHands-first routing."""
     engine = os.getenv("JARVIS_AGENT_ENGINE", "auto").strip().lower()
 
     if engine in {"auto", "openhands"}:
         try:
             from agent.openhands_runtime import OpenHandsUnavailable, openhands_available, run_once
 
-            if engine == "openhands" or openhands_available():
+            if openhands_available():
                 for event in run_once(workspace, goal):
                     yield event
+                return
+            if engine == "openhands":
+                yield {"type": "error", "error": "OpenHands SDK is not available.", "final": True}
                 return
         except OpenHandsUnavailable as exc:
             if engine == "openhands":
