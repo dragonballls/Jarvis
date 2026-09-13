@@ -1,4 +1,4 @@
-"""Minimal local API for Jarvis: conversation and self-coding only."""
+"""Minimal local API for Jarvis: conversation and OpenHands self-coding only."""
 
 import argparse
 import asyncio
@@ -14,7 +14,7 @@ from quart import Quart, jsonify, make_response, request
 from quart_cors import cors
 
 from agent.core import Agent
-from agent.evolution import run_evolution_cycle
+from agent.openhands_runtime import run_once as run_openhands_once
 from agent.self_coding_runtime import is_self_coding_goal
 
 API_PREFIX = "/api/v1"
@@ -139,7 +139,7 @@ async def autopilot():
     if not goal:
         return jsonify({"error": "goal is required"}), 422
 
-    workspace = data.get("workspace") or os.getenv("JARVIS_WORKSPACE") or os.getenv("FRIDAY_WORKSPACE")
+    workspace = data.get("workspace") or os.getenv("JARVIS_WORKSPACE")
     workspace_error = validate_workspace(workspace)
     if workspace_error:
         return jsonify({"error": workspace_error}), 422
@@ -157,17 +157,13 @@ async def autopilot():
             try:
                 if is_self_coding_goal(goal):
                     if not workspace:
-                        events = iter(
-                            [
-                                {
-                                    "type": "error",
-                                    "content": "Self-coding requires an explicit workspace path.",
-                                    "final": True,
-                                }
-                            ]
-                        )
+                        events = iter([{
+                            "type": "error",
+                            "content": "Self-coding requires an explicit workspace path.",
+                            "final": True,
+                        }])
                     else:
-                        events = run_evolution_cycle(Path(workspace), goal)
+                        events = iter(run_openhands_once(Path(workspace), goal))
                 else:
                     events = agent.run_autopilot(goal, workspace)
                 for event in events:
@@ -201,15 +197,13 @@ async def autopilot():
 @app.route(f"{API_PREFIX}/health")
 async def health():
     from agent.openhands_runtime import openhands_available
+    available = openhands_available()
     return jsonify(
         {
             "status": "ok",
             "mode": "minimal",
-            "features": ["conversation", "self_coding", "openhands", "emrg_evolution"],
-            "engines": {
-                "openhands": openhands_available(),
-                "opencode": True,
-            },
+            "features": ["conversation", "self_coding", "openhands"],
+            "engines": {"openhands": available},
             "name": "Jarvis",
         }
     )
