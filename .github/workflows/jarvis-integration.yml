@@ -15,26 +15,77 @@ permissions:
   contents: read
 
 jobs:
-  python-integration:
+  mark53:
+    name: Mark 53 boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Verify Mark 53 component
+        run: |
+          set -euo pipefail
+          python -m compileall -q mark53
+          python -m pytest -q tests/test_component_boundaries.py -k 'mark53 or mark_updater'
+
+  self-coding:
+    name: Self-coding boundary
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Check out Jarvis
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-
-      - name: Install test dependencies
+      - name: Install dependencies
         run: python -m pip install --disable-pip-version-check -r requirements.txt
-
-      - name: Run integration and component-boundary tests
-        shell: bash
+      - name: Verify self-coding
         run: |
           set -euo pipefail
-          python -m compileall -q core integrations plugins agent providers mark53 mark_updater self_coding
+          python -m compileall -q agent self_coding
+          python -m pytest -q tests/test_component_boundaries.py -k 'self_coding'
+          python -m pytest -q \
+            tests/test_agent_coding_routing.py \
+            tests/test_agent_coding_rollback_boundary.py \
+            tests/test_agent_coding_session_integration.py \
+            tests/test_agent_safe_coding_integration.py
+
+  openhands-emrg:
+    name: OpenHands and EMRG
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Verify OpenHands and EMRG
+        run: |
+          set -euo pipefail
+          python -m compileall -q agent core
+          python -m pytest -q tests/test_agent_integrations.py tests/test_component_boundaries.py -k 'self_coding'
+
+  gods-eye:
+    name: God's Eye
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Verify God's Eye
+        run: |
+          set -euo pipefail
+          python -m compileall -q core integrations plugins
           python -m pytest -q \
             core/test_gods_eye_bridge.py \
             core/test_gods_eye_context.py \
@@ -43,7 +94,54 @@ jobs:
             integrations/gods_eye/test_contract.py \
             tests/test_gods_eye_intent.py \
             tests/test_gods_eye_intent_safety.py \
-            tests/test_gods_eye_plugin_discovery.py \
-            tests/test_provider_routing.py \
-            tests/test_provider_fallback.py \
-            tests/test_component_boundaries.py
+            tests/test_gods_eye_plugin_discovery.py
+
+  providers:
+    name: Providers and routing
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Verify providers
+        run: |
+          set -euo pipefail
+          python -m compileall -q providers config core
+          python -m pytest -q tests/test_provider_routing.py tests/test_provider_fallback.py tests/test_blackout.py
+
+  jarvis-updater:
+    name: Jarvis updater
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Verify updater syntax and contract
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/update.py packaging/windows/app.py packaging/windows/build.py
+          grep -q 'JARVIS_AUTO_UPDATE_EXE' packaging/windows/app.py
+          grep -q 'JARVIS_UPDATED_RESTART' packaging/windows/app.py
+          grep -q 'Jarvis.exe' packaging/windows/build.py
+
+  boundaries:
+    name: Component boundary gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [mark53, self-coding, openhands-emrg, gods-eye, providers, jarvis-updater]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Verify isolated namespaces
+        run: |
+          set -euo pipefail
+          python -m compileall -q mark53 mark_updater self_coding
+          python -m pytest -q tests/test_component_boundaries.py
