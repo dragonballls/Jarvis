@@ -175,6 +175,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - name: Install boundary test dependencies
+        run: python -m pip install --disable-pip-version-check pytest
       - name: Verify isolated namespaces
         run: |
           set -euo pipefail
