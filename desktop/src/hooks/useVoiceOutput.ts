@@ -26,7 +26,7 @@ const VOICE_STORAGE_KEY = 'friday_tts_voice_uri'
 const ENABLED_STORAGE_KEY = 'friday_voice_output_enabled'
 
 export function useVoiceOutput(): UseVoiceOutputReturn {
-  const [enabled, setEnabled] = useState(() => localStorage.getItem(ENABLED_STORAGE_KEY) === 'true')
+  const [enabled, setEnabled] = useState(() => localStorage.getItem(ENABLED_STORAGE_KEY) !== 'false')
   const [status, setStatus] = useState<VoiceOutputStatus>('idle')
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
   const [selectedVoice, setSelectedVoiceState] = useState<SpeechSynthesisVoice | null>(null)
@@ -94,15 +94,12 @@ export function useVoiceOutput(): UseVoiceOutputReturn {
 
   const speakWithCloudVoice = useCallback(async (text: string, options?: SpeakOptions) => {
     if (!cloudVoiceReady) return false
-
-    const requestGeneration = ++cloudRequestGenerationRef.current
+    const generation = ++cloudRequestGenerationRef.current
     cleanupAudio()
-
     try {
       const blob = await synthesizeVoice(text)
-      if (requestGeneration !== cloudRequestGenerationRef.current) return true
+      if (generation !== cloudRequestGenerationRef.current) return true
       if (blob.size === 0) throw new Error('ElevenLabs returned empty audio')
-
       const url = URL.createObjectURL(blob)
       const audio = new Audio(url)
       audio.preload = 'auto'
@@ -111,27 +108,20 @@ export function useVoiceOutput(): UseVoiceOutputReturn {
       audioUrlRef.current = url
       cloudSpeakingRef.current = true
       setStatus('speaking')
-
       audio.onended = () => {
-        if (requestGeneration !== cloudRequestGenerationRef.current) return
+        if (generation !== cloudRequestGenerationRef.current) return
         cleanupAudio()
         setStatus('idle')
       }
       audio.onerror = () => {
-        if (requestGeneration !== cloudRequestGenerationRef.current) return
+        if (generation !== cloudRequestGenerationRef.current) return
         cleanupAudio()
         enqueueBrowserSpeech(text, options)
       }
-
       await audio.play()
-      if (requestGeneration !== cloudRequestGenerationRef.current) {
-        audio.pause()
-        audio.src = ''
-        URL.revokeObjectURL(url)
-      }
       return true
     } catch {
-      if (requestGeneration !== cloudRequestGenerationRef.current) return true
+      if (generation !== cloudRequestGenerationRef.current) return true
       cleanupAudio()
       return enqueueBrowserSpeech(text, options)
     }
