@@ -2,58 +2,32 @@
 
 This file instructs AI coding agents (opencode, Claude Code, Cline, Cursor, etc.) how to work effectively with this project.
 
-## Project Overview
-
-Friday is an open-source JARVIS-class desktop AI command center with a Python/Quart backend and React/TypeScript frontend backed by Three.js. It supports streaming chat, tool calling, voice, vision, proactive alerts, automations, and a rich 3D interface.
-
 ## Quick Start for Agents
 
 ### Backend (Python)
 
 ```bash
-# Install deps
 pip install -r requirements.txt
-
-# Run tests
 python -m pytest tests/ -v
 python -m pytest tests/ -v --cov
-
-# CI enforces a coverage gate: the main suite must stay above 50%
-# (tests/test_api_server.py is run separately against desktop/ and gated at 40%).
 python -m pytest tests/ --cov --cov-fail-under=50 --ignore=tests/test_api_server.py
 python -m pytest tests/test_api_server.py --cov=desktop --cov-fail-under=40
-
-# Lint
 ruff check .
 ruff format --check .
-
-# Run backend
-python main.py                   # terminal REPL
-python desktop/api_server.py     # Quart web server (port 8080)
+python main.py
+python desktop/api_server.py
 ```
 
 ### Frontend (TypeScript/React)
 
 ```bash
 cd desktop
-
-# Install deps
 npm install
-
-# Test
 npm run test
 npm run test:watch
-
-# Lint
-npm run lint             # oxlint
-
-# Type check
+npm run lint
 npx tsc --noEmit
-
-# Dev server
-npm run dev              # port 5173
-
-# Build
+npm run dev
 npm run build
 ```
 
@@ -70,58 +44,74 @@ npm run build
 - Use `async/await` for I/O, `asyncio.to_thread` for blocking calls
 - Type hints required on all Python function signatures
 
-### Project Structure
+## Project Structure
 - `core/` — Business logic (executor, memory, proactive, automations, etc.)
-- `desktop/api_server.py` — Quart REST API (~1200 lines)
-- `desktop/src/` — React frontend
-- `tests/` — Python tests (pytest)
-- `desktop/src/test/` — TypeScript tests (Vitest)
-- `plugins/` — Tool plugins (discovered automatically)
-- `providers/` — LLM provider abstraction (OpenAI, Ollama, etc.)
+- `desktop/api_server.py` — Quart REST API
+- `desktop/src/` — React/TypeScript frontend
+- `tests/` — Python tests
+- `desktop/src/test/` — TypeScript tests
+- `plugins/` — Tool plugins
+- `providers/` — LLM provider abstraction
 
 ## Important Architecture Notes
 
 ### API Server (`desktop/api_server.py`)
-- Uses Quart (async Flask-compatible framework)
+- Uses Quart
 - Module-level code runs at import time: `discover_plugins()`, `_broadcaster = EventBroadcaster()`
 - Tests must patch `core.registry.discover_plugins` and `desktop.api_server._proactive` BEFORE import
-- All SQLAlchemy/ORM is irrelevant; the project uses JSON files for persistence
+- Persistence uses JSON files
 
 ### Testing
-- **Backend:** pytest with `pytest-asyncio` (strict mode), `--tb=short` default
-- **Frontend:** Vitest with jsdom environment, Testing Library
-- All test methods must be `@pytest.mark.asyncio` or use module-level `pytestmark = pytest.mark.asyncio`
-- Test files go in `tests/` (Python) or `desktop/src/test/` (TypeScript)
+- **Backend:** pytest with `pytest-asyncio` strict mode
+- **Frontend:** Vitest with jsdom environment and Testing Library
+- Python test methods must use `@pytest.mark.asyncio` where required by strict mode
 
 ### Linting
-- Python: Ruff 0.9+ (no ESLint or Prettier)
-- TypeScript: oxlint 1.71+ (no ESLint or Prettier)
-
-### Memory System
-- Three parallel engines: keyword (TF-IDF), vector (cosine similarity), embeddings (sentence-transformers)
-- `core/memory/` contains all memory components
+- Python: Ruff
+- TypeScript: oxlint
 
 ### LLM Providers
 - Registered via `providers/registry.py`
-- Default: OpenRouter. Also supports OpenAI, Ollama, and any OpenAI-compatible API
+- Default: OpenRouter; also supports OpenAI, Ollama, and OpenAI-compatible APIs
 - Config via `config/providers.toml`
+
+## Component Isolation Rule
+
+Every current and future addition must have an identifiable component boundary. Do not combine unrelated additions into one mutable lifecycle, installer, updater, workspace, runtime state directory, or executable.
+
+The current boundaries are:
+
+- `mark53/` — Mark 53 integration boundary only. Read-only bridge; no Mark files, binaries, updater state, or startup management.
+- `mark_updater/` — Mark 53 updater boundary only. Never updates Jarvis or its self-coding workspace.
+- `self_coding/` — Jarvis self-coding facade only. Never replaces `Jarvis.exe` directly.
+- `agent/` OpenHands/OpenCode execution — coding engines only; operate through the self-coding boundary.
+- `core/` EMRG evolution logic — bounded evolution/verification only; do not merge updater responsibilities into it.
+- `integrations/gods_eye/` and related God's Eye bridge/context files — God's Eye only.
+- `providers/`, `config/`, and `core/blackout.py` — provider/routing/privacy behavior only.
+- `scripts/update.py` — Jarvis source/release updater only.
+- `packaging/windows/` — Windows packaging and executable lifecycle only.
+
+A new feature must get its own named directory or explicit subsystem boundary plus component-specific tests. Its errors should identify the component name. Coordination is allowed only through narrow interfaces.
+
+Never make one component responsible for replacing, deleting, or modifying another component's installation, executable, Git checkout, updater manifest, or persistent state.
+
+See `ARCHITECTURE_COMPONENTS.md` for the authoritative component lifecycle map.
 
 ## Common Tasks
 
 ### Adding an API endpoint
 1. Define route in `desktop/api_server.py`
-2. Add `@require_auth` decorator for authenticated endpoints
-3. Add validation helpers if needed
-4. Write test in `tests/test_api_server.py`
+2. Add `@require_auth` for authenticated endpoints
+3. Add validation helpers
+4. Write tests
 
 ### Adding a tool
-1. Create a plugin class in `plugins/builtins/` extending `ToolPlugin`
-2. Or add a standalone function in `tools/`
-3. It's auto-discovered by `core.registry.discover_plugins()`
-4. Write tests in a new or existing test file
+1. Create a plugin class in `plugins/builtins/` or a standalone function in `tools/`
+2. Ensure discovery behavior is preserved
+3. Write tests
 
 ### Adding a frontend component
-1. Create component in `desktop/src/components/<category>/`
+1. Create the component in `desktop/src/components/<category>/`
 2. Add types in `desktop/src/types/index.ts`
 3. Write tests in `desktop/src/test/`
-4. Use Zustand store from `desktop/src/core/` for global state
+4. Use Zustand from `desktop/src/core/`
