@@ -1,4 +1,4 @@
-"""Minimal local API for Jarvis: conversation and self-coding only."""
+"""Minimal local API for Jarvis: conversation, self-coding, and provider settings."""
 
 import argparse
 import asyncio
@@ -16,6 +16,7 @@ from quart_cors import cors
 from agent.core import Agent
 from agent.evolution import run_evolution_cycle
 from agent.self_coding_runtime import is_self_coding_goal
+from desktop.provider_credentials import PROVIDERS, delete_key, public_status, save_key
 
 API_PREFIX = "/api/v1"
 MINIMAL_MODE = True
@@ -60,7 +61,7 @@ app = Quart(__name__)
 app = cors(
     app,
     allow_origin={"http://localhost:5173", "http://127.0.0.1:5173"},
-    allow_methods={"GET", "POST", "OPTIONS"},
+    allow_methods={"GET", "POST", "DELETE", "OPTIONS"},
     allow_headers={"Content-Type", "X-API-Key"},
     allow_credentials=True,
 )
@@ -82,8 +83,10 @@ async def reject_non_core_api():
         f"{API_PREFIX}/chat",
         f"{API_PREFIX}/autopilot",
         f"{API_PREFIX}/health",
+        f"{API_PREFIX}/providers",
+        f"{API_PREFIX}/providers/test",
     }
-    if request.path.startswith(API_PREFIX) and request.path not in allowed:
+    if request.path.startswith(API_PREFIX) and request.path not in allowed and not request.path.startswith(f"{API_PREFIX}/providers/"):
         return jsonify({"error": "Disabled in minimal Jarvis mode"}), 404
     return None
 
@@ -203,6 +206,63 @@ async def autopilot():
     return response
 
 
+@app.route(f"{API_PREFIX}/providers", methods=["GET", "POST"])
+@require_auth
+async def providers():
+    if request.method == "GET":
+        return jsonify({"providers": public_status()})
+
+    data = await request.get_json() or {}
+    provider = str(data.get("provider", "")).strip()
+    api_key = str(data.get("api_key", "")).strip()
+    if provider not in PROVIDERS:
+        return jsonify({"error": "Unsupported provider"}), 422
+    if not api_key:
+        return jsonify({"error": "API key cannot be empty"}), 422
+    try:
+        save_key(provider, api_key)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 500
+    return jsonify({"success": True, "provider": provider, "configured": True})
+
+
+@app.route(f"{API_PREFIX}/providers/<provider>", methods=["DELETE"])
+@require_auth
+async def remove_provider(provider: str):
+    provider = provider.strip()
+    if provider not in PROVIDERS:
+        return jsonify({"error": "Unsupported provider"}), 422
+    try:
+        delete_key(provider)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 500
+    return jsonify({"success": True, "provider": provider, "configured": False})
+
+
+@app.route(f"{API_PREFIX}/providers/test", methods=["POST"])
+@require_auth
+async def test_providers():
+    """Verify that saved credentials are visible to Jarvis's provider layer.
+
+    This deliberately does not print or return secrets. It constructs each
+    configured provider, while actual network/API validation remains opt-in.
+    """
+    from providers import get_provider
+
+    results = []
+    for status in public_status():
+        provider = status["id"]
+        if not status["configured"]:
+            results.append({"provider": provider, "configured": False, "ready": False})
+            continue
+        try:
+            get_provider(str(provider))
+            results.append({"provider": provider, "configured": True, "ready": True})
+        except Exception as exc:
+            results.append({"provider": provider, "configured": True, "ready": False, "error": str(exc)})
+    return jsonify({"providers": results})
+
+
 @app.route(f"{API_PREFIX}/health")
 async def health():
     from agent.openhands_runtime import openhands_available
@@ -210,7 +270,7 @@ async def health():
         {
             "status": "ok",
             "mode": "minimal",
-            "features": ["conversation", "self_coding", "openhands", "emrg_evolution"],
+            "features": ["conversation", "self_coding", "provider_settings", "openhands", "emrg_evolution"],
             "engines": {
                 "openhands": openhands_available(),
                 "opencode": True,
