@@ -11,6 +11,8 @@ from pathlib import Path
 from tkinter import font as tkfont
 from urllib.request import Request, urlopen
 
+from core.opencode_agent import run_coding_agent
+
 _MUTEX_HANDLE = None
 
 def _acquire_single_instance() -> bool:
@@ -40,29 +42,14 @@ from packaging.windows.app import (
 
 
 def _post_autopilot(goal: str, workspace: Path | None) -> None:
-    payload = json.dumps({
-        "goal": goal,
-        "workspace": str(workspace) if workspace else None,
-        "session_id": "jarvis-native",
-    }).encode("utf-8")
-    req = Request(
-        f"http://{API_HOST}:{API_PORT}/api/v1/autopilot",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    if workspace is None:
+        log("Self-coding stopped: workspace is unavailable")
+        return
     try:
-        with urlopen(req, timeout=900) as response:
-            for line in response:
-                if not line.strip():
-                    continue
-                try:
-                    event = json.loads(line.decode("utf-8", errors="replace"))
-                    content = str(event.get("content", ""))
-                    if content:
-                        log(f"SELF-CODING: {content}")
-                except json.JSONDecodeError:
-                    log("SELF-CODING: " + line.decode("utf-8", errors="replace").strip())
+        for event in run_coding_agent(workspace, goal):
+            content = str(event.get("content") or event.get("error") or "")
+            if content:
+                log(f"SELF-CODING: {content.rstrip()}")
     except Exception:
         log("Self-coding startup task failed:\n" + traceback.format_exc())
 
@@ -184,7 +171,9 @@ def main() -> None:
         daemon=True,
     ).start()
 
-    # Start autonomous self-coding only after the API is actually listening.
+    # Start autonomous coding through the installed OpenCode agent only after
+    # Jarvis's own API is listening. OpenCode owns the coding/tool loop; Jarvis
+    # supervises the process and keeps model inference off the local machine.
     threading.Thread(
         target=_post_autopilot,
         args=(
@@ -195,7 +184,7 @@ def main() -> None:
         daemon=True,
     ).start()
 
-    log("Jarvis native desktop UI ready; autonomous self-coding started")
+    log("Jarvis native desktop UI ready; OpenCode autonomous coding started")
     run_native_ui(workspace)
 
 
