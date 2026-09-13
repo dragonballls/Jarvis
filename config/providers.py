@@ -51,11 +51,21 @@ def _load_dotenv():
 _load_dotenv()
 
 
-def _resolve_api_key(toml_key: str, env_var: str) -> str:
-    """Resolve a provider key from process env, Windows user env, or toml."""
+def _load_saved_key(provider: str) -> str:
+    """Load a key entered through Jarvis Settings from secure local storage."""
+    try:
+        from desktop.provider_credentials import get_key
+        return get_key(provider)
+    except (ImportError, OSError, RuntimeError, ValueError):
+        return ""
+
+
+def _resolve_api_key(toml_key: str, env_var: str, provider: str) -> str:
+    """Resolve a provider key without requiring source/config edits."""
     return (
         os.environ.get(env_var, "")
         or _load_windows_user_env(env_var)
+        or _load_saved_key(provider)
         or os.environ.get(toml_key, "")
     )
 
@@ -120,13 +130,9 @@ def load_provider_config() -> dict[str, Any]:
             "provider_name": "groq",
         },
     )
-    # Existing configuration may have supplied a larger Groq budget. Keep the
-    # free-tier request safely below the observed 1,000 OTPM ceiling.
     if isinstance(cfg.get("groq"), dict):
         cfg["groq"]["max_tokens"] = min(int(cfg["groq"].get("max_tokens", 512) or 512), 512)
 
-    # Override API keys from environment variables. Secrets never need to be
-    # committed to the repository; user-level environment variables are preferred.
     env_map = {
         "openai": ("api_key", "OPENAI_API_KEY"),
         "openrouter": ("api_key", "OPENROUTER_API_KEY"),
@@ -135,7 +141,7 @@ def load_provider_config() -> dict[str, Any]:
     }
     for section, (field, env_var) in env_map.items():
         if section in cfg:
-            resolved = _resolve_api_key(field, env_var)
+            resolved = _resolve_api_key(field, env_var, section)
             if resolved:
                 cfg[section][field] = resolved
 
@@ -158,9 +164,6 @@ def get_active_provider(config: dict[str, Any] | None = None) -> str:
     primary = str(routing.get("primary", "")).strip() if isinstance(routing, dict) else ""
 
     if default == "ollama":
-        # Ollama is never an automatic fallback/default. If an explicit cloud
-        # routing primary exists, prefer it; otherwise use OpenRouter so a
-        # stopped local Ollama service cannot break the assistant.
         if primary and primary != "ollama":
             return primary
         return "openrouter"
