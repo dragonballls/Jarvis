@@ -39,7 +39,7 @@ ROOT = resource_root()
 def _run_no_window(*args, **kwargs):
     if os.name == "nt":
         kwargs.setdefault("creationflags", getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    return _run_no_window(*args, **kwargs)
+    return subprocess.run(*args, **kwargs)
 
 
 def active_workspace() -> Path | None:
