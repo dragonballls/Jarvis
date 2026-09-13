@@ -30,11 +30,11 @@ jobs:
       - name: Install test dependencies
         run: python -m pip install --disable-pip-version-check -r requirements.txt
 
-      - name: Run God's Eye and provider integration tests
+      - name: Run integration and component-boundary tests
         shell: bash
         run: |
           set -euo pipefail
-          python -m compileall -q core integrations plugins agent providers
+          python -m compileall -q core integrations plugins agent providers mark53 mark_updater self_coding
           python -m pytest -q \
             core/test_gods_eye_bridge.py \
             core/test_gods_eye_context.py \
@@ -45,4 +45,5 @@ jobs:
             tests/test_gods_eye_intent_safety.py \
             tests/test_gods_eye_plugin_discovery.py \
             tests/test_provider_routing.py \
-            tests/test_provider_fallback.py
+            tests/test_provider_fallback.py \
+            tests/test_component_boundaries.py
