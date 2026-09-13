@@ -6,7 +6,7 @@ from typing import Any
 
 
 class OpenHandsUnavailable(RuntimeError):
-    """Raised when the optional OpenHands SDK is not installed or cannot initialize."""
+    """Raised when the optional OpenHands SDK cannot initialize."""
 
 
 def _load_openhands() -> tuple[Any, Any, Any, Any, Any]:
@@ -15,7 +15,7 @@ def _load_openhands() -> tuple[Any, Any, Any, Any, Any]:
         from openhands.tools.file_editor import FileEditorTool
         from openhands.tools.task_tracker import TaskTrackerTool
         from openhands.tools.terminal import TerminalTool
-    except Exception as exc:  # pragma: no cover - depends on optional runtime
+    except Exception as exc:  # pragma: no cover - runtime-dependent import
         raise OpenHandsUnavailable(str(exc)) from exc
     return Agent, Conversation, LLM, Tool, (FileEditorTool, TaskTrackerTool, TerminalTool)
 
@@ -45,32 +45,34 @@ def _api_key() -> str:
 
 
 def run_once(workspace: Path, goal: str) -> list[dict[str, Any]]:
-    """Run a bounded OpenHands coding session and return normalized Jarvis events.
+    """Run one bounded OpenHands coding conversation.
 
-    OpenHands is intentionally loaded lazily so Jarvis still boots when the optional
-    SDK is not installed. No local model is selected here; the model and credential
-    are supplied by the environment.
+    The SDK is optional and loaded lazily. Jarvis does not select a local model.
+    This wrapper converts the SDK's non-streaming conversation lifecycle into the
+    small event shape already used by Jarvis's coding API.
     """
     Agent, Conversation, LLM, Tool, tools = _load_openhands()
     workspace = workspace.resolve()
     if not workspace.is_dir():
         raise OpenHandsUnavailable(f"Workspace does not exist: {workspace}")
 
-    llm = LLM(model=_model_name(), api_key=_api_key())
+    from pydantic import SecretStr
+
+    llm = LLM(model=_model_name(), api_key=SecretStr(_api_key()))
     agent = Agent(
         llm=llm,
         tools=[Tool(name=tool.name) for tool in tools],
     )
-    conversation = Conversation(agent=agent, workspace=str(workspace))
-
-    events: list[dict[str, Any]] = []
+    conversation = Conversation(
+        agent=agent,
+        workspace=workspace,
+        max_iteration_per_run=int(os.getenv("JARVIS_OPENHANDS_MAX_ITERATIONS", "50")),
+        delete_on_close=False,
+    )
     conversation.send_message(goal)
-    for event in conversation.run():
-        event_type = getattr(event, "type", None) or event.__class__.__name__
-        payload: dict[str, Any] = {"type": "agent_event", "event": str(event_type)}
-        content = getattr(event, "content", None)
-        if content:
-            payload["content"] = str(content)
-        events.append(payload)
-    events.append({"type": "done", "content": "OpenHands run completed.", "final": True})
-    return events
+    conversation.run()
+
+    return [
+        {"type": "agent_event", "event": "openhands_completed", "workspace": str(workspace)},
+        {"type": "done", "content": "OpenHands coding run completed successfully.", "final": True},
+    ]
