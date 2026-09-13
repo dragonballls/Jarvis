@@ -151,7 +151,21 @@ export function streamAutopilot(
   return controller
 }
 
-export async function checkHealth(): Promise<{ status: string; sessions: number }> { return fetchApi('/health') }
+export function checkHealth(): Promise<any> { return fetchApi('/health') }
+
+export interface ProviderStatus { id: string; env_var: string; configured: boolean }
+export interface ProviderTestResult { provider: string; configured: boolean; ready: boolean; error?: string }
+export async function getProviderStatus(): Promise<{ providers: ProviderStatus[] }> { return fetchApi('/providers') }
+export async function saveProviderKey(provider: string, apiKey: string): Promise<{ success: boolean; provider: string; configured: boolean }> {
+  return fetchApi('/providers', { method: 'POST', body: JSON.stringify({ provider, api_key: apiKey }) })
+}
+export async function removeProviderKey(provider: string): Promise<{ success: boolean; provider: string; configured: boolean }> {
+  return fetchApi(`/providers/${encodeURIComponent(provider)}`, { method: 'DELETE' })
+}
+export async function testProviders(): Promise<{ providers: ProviderTestResult[] }> {
+  return fetchApi('/providers/test', { method: 'POST' })
+}
+
 export async function getMetrics(): Promise<any> { return fetchApi('/metrics') }
 export async function getSessions(): Promise<{ sessions: { id: string; language: string }[] }> { return fetchApi('/sessions') }
 export async function createSession(language = 'english') { return fetchApi('/sessions', { method: 'POST', body: JSON.stringify({ language }) }) }
