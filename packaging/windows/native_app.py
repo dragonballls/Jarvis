@@ -11,7 +11,7 @@ from pathlib import Path
 from tkinter import font as tkfont
 from urllib.request import Request, urlopen
 
-from core.opencode_agent import run_coding_agent
+from core.opencode_agent import openhands_available, run_coding_agent
 from packaging.windows.app import (
     API_HOST,
     API_PORT,
@@ -41,6 +41,36 @@ def _acquire_single_instance() -> bool:
     return True
 
 
+def smoke_test() -> None:
+    """Run a fast packaged-runtime check without opening the user interface."""
+    log("Jarvis smoke test starting")
+    required = [
+        ("desktop.api_server", "desktop.api_server"),
+        ("OpenHands runtime", "agent.openhands_runtime"),
+        ("OpenHands tools", "openhands.tools.file_editor"),
+        ("OpenHands task tracker", "openhands.tools.task_tracker"),
+        ("OpenHands terminal", "openhands.tools.terminal"),
+        ("EMRG", "emrg"),
+    ]
+    for label, module in required:
+        try:
+            __import__(module)
+        except Exception as exc:
+            raise RuntimeError(f"{label} import failed: {exc}") from exc
+        log(f"SMOKE: {label} import OK")
+
+    run_api_server_thread()
+    wait_for_port(API_HOST, API_PORT, timeout=20.0)
+    request = Request(f"http://{API_HOST}:{API_PORT}/api/v1/health", method="GET")
+    with urlopen(request, timeout=10) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if payload.get("status") != "ok" or payload.get("name") != "Jarvis":
+        raise RuntimeError(f"Unexpected health response: {payload}")
+    log("SMOKE: API health OK")
+    log(f"SMOKE: OpenHands import availability={openhands_available()}")
+    log("Jarvis smoke test passed")
+
+
 def _post_autopilot(goal: str, workspace: Path | None) -> None:
     if workspace is None:
         log("Self-coding stopped: workspace is unavailable")
@@ -55,10 +85,7 @@ def _post_autopilot(goal: str, workspace: Path | None) -> None:
 
 
 def _post_chat(message: str, session_id: str) -> list[str]:
-    payload = json.dumps({
-        "message": message,
-        "session_id": session_id,
-    }).encode("utf-8")
+    payload = json.dumps({"message": message, "session_id": session_id}).encode("utf-8")
     req = Request(
         f"http://{API_HOST}:{API_PORT}/api/v1/chat",
         data=payload,
@@ -156,6 +183,9 @@ def run_native_ui(workspace: Path) -> None:
 
 
 def main() -> None:
+    if "--smoke-test" in os.sys.argv:
+        smoke_test()
+        return
     if not _acquire_single_instance():
         return
     workspace = prepare_self_coding_workspace()
@@ -171,9 +201,6 @@ def main() -> None:
         daemon=True,
     ).start()
 
-    # Start autonomous coding through the installed OpenCode agent only after
-    # Jarvis's own API is listening. OpenCode owns the coding/tool loop; Jarvis
-    # supervises the process and keeps model inference off the local machine.
     threading.Thread(
         target=_post_autopilot,
         args=(
@@ -184,7 +211,7 @@ def main() -> None:
         daemon=True,
     ).start()
 
-    log("Jarvis native desktop UI ready; OpenCode autonomous coding started")
+    log("Jarvis native desktop UI ready; autonomous coding started")
     run_native_ui(workspace)
 
 
