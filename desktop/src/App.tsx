@@ -11,6 +11,7 @@ import {
   type ProviderStatus,
   type ProviderTestResult,
 } from './core/api'
+import { useVoiceOutput } from './hooks/useVoiceOutput'
 import './provider-settings.css'
 
 const SELF_CODING_GOAL =
@@ -38,6 +39,7 @@ function App() {
   const codingTimerRef = useRef<number | null>(null)
   const codingControllerRef = useRef<AbortController | null>(null)
   const mountedRef = useRef(true)
+  const { speak } = useVoiceOutput()
 
   useEffect(() => {
     mountedRef.current = true
@@ -102,15 +104,6 @@ function App() {
     } catch (err: any) {
       setSettingsMessage(`Provider verification failed: ${String(err?.message ?? err)}`)
     }
-  }
-
-  const speak = (text: string) => {
-    if (!text.trim() || !('speechSynthesis' in window)) return
-    window.speechSynthesis.cancel()
-    const utterance = new SpeechSynthesisUtterance(text)
-    utterance.rate = 0.94
-    utterance.pitch = 0.95
-    window.speechSynthesis.speak(utterance)
   }
 
   const sendMessage = (event?: FormEvent) => {
