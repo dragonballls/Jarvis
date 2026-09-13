@@ -134,6 +134,94 @@ export function streamAutopilot(
   return controller
 }
 
+export interface ServerEvent { type: string; data: any }
+
+export function connectEventSource(
+  onEvent: (event: ServerEvent) => void,
+  onError?: () => void,
+  onStatus?: (connected: boolean) => void,
+): () => void {
+  let stopped = false
+  let source: EventSource | null = null
+  let retryTimer: ReturnType<typeof setTimeout> | null = null
+  let dropTimer: ReturnType<typeof setTimeout> | null = null
+  let retryDelay = 1000
+  let reportedOffline = false
+
+  const clearDropTimer = () => {
+    if (dropTimer) {
+      clearTimeout(dropTimer)
+      dropTimer = null
+    }
+  }
+
+  const connect = () => {
+    if (stopped) return
+    if (source) source.close()
+    source = new EventSource(`${API_BASE}/events`)
+    source.onmessage = (message) => {
+      try { onEvent(JSON.parse(message.data)) } catch {}
+    }
+    source.onopen = () => {
+      retryDelay = 1000
+      clearDropTimer()
+      reportedOffline = false
+      onStatus?.(true)
+    }
+    source.onerror = () => {
+      source?.close()
+      source = null
+      clearDropTimer()
+      if (!reportedOffline) {
+        dropTimer = setTimeout(() => {
+          if (stopped || source) return
+          reportedOffline = true
+          onStatus?.(false)
+          onError?.()
+        }, 4000)
+      }
+      if (!stopped && !retryTimer) {
+        const delay = retryDelay
+        retryDelay = Math.min(retryDelay * 2, 30000)
+        retryTimer = setTimeout(() => {
+          retryTimer = null
+          connect()
+        }, delay)
+      }
+    }
+  }
+
+  const reconnectNow = () => {
+    if (stopped) return
+    if (retryTimer) {
+      clearTimeout(retryTimer)
+      retryTimer = null
+    }
+    connect()
+  }
+
+  const onVisibilityChange = () => {
+    if (document.visibilityState === 'visible') reconnectNow()
+  }
+  const onOnline = () => reconnectNow()
+
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  window.addEventListener('online', onOnline)
+  connect()
+
+  return () => {
+    stopped = true
+    if (retryTimer) clearTimeout(retryTimer)
+    if (dropTimer) clearTimeout(dropTimer)
+    retryTimer = null
+    dropTimer = null
+    source?.close()
+    source = null
+    document.removeEventListener('visibilitychange', onVisibilityChange)
+    window.removeEventListener('online', onOnline)
+  }
+}
+
 export function checkHealth(): Promise<any> { return fetchApi('/health') }
 
 export interface ProviderStatus { id: string; env_var: string; configured: boolean }
@@ -178,6 +266,19 @@ export async function synthesizeVoice(text: string): Promise<Blob> {
   } finally {
     clearTimeout(timer)
   }
+}
+
+export async function getDiaryRecent(): Promise<{ days: DiaryDay[] }> {
+  return fetchApi('/diary/recent')
+}
+
+export async function getDiaryPage(dateStr?: string): Promise<DiaryPage> {
+  const q = dateStr ? `?date=${encodeURIComponent(dateStr)}` : ''
+  return fetchApi(`/diary${q}`)
+}
+
+export async function writeNightlyDigest(): Promise<{ path: string; success: boolean }> {
+  return fetchApi('/diary/nightly', { method: 'POST' })
 }
 
 export async function getMetrics(): Promise<any> { return fetchApi('/metrics') }
