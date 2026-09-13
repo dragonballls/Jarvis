@@ -73,9 +73,25 @@ jobs:
         shell: pwsh
         run: python packaging/windows/build.py
 
+      - name: Verify packaged app metadata
+        shell: pwsh
+        run: |
+          if (-not (Test-Path build/windows/Jarvis.exe)) { throw "build/windows/Jarvis.exe was not produced" }
+          if (-not (Test-Path build/windows/VERSION)) { throw "build/windows/VERSION was not produced" }
+          $expected = "${{ github.sha }}"
+          $actual = (Get-Content build/windows/VERSION -Raw).Trim()
+          if ($actual -ne $expected) { throw "VERSION mismatch: expected $expected but found $actual" }
+
       - name: Smoke-test packaged executable
         shell: pwsh
         run: python packaging/windows/smoke_test.py
+
+      - name: Verify smoke-test log
+        shell: pwsh
+        run: |
+          if (-not (Test-Path build/windows/smoke_test.log)) { throw "Smoke-test log was not produced" }
+          $log = Get-Content build/windows/smoke_test.log -Raw
+          if ($log -notmatch "Jarvis smoke test passed") { throw "Packaged smoke test did not report success" }
 
       - name: Upload single-file Windows app
         uses: actions/upload-artifact@v4
