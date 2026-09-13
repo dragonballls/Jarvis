@@ -11,6 +11,12 @@ DIST = ROOT / "desktop" / "dist"
 # fallback shell and could produce the old bare-bones desktop experience.
 ENTRY = ROOT / "packaging" / "windows" / "app.py"
 
+# Jarvis's desktop runtime serves the already-built production frontend from
+# desktop/dist. That bundle must be embedded in the single-file executable;
+# otherwise the frozen app starts correctly but fails its UI smoke test because
+# _MEIPASS/desktop/dist does not exist.
+DIST_SEPARATOR = ";"
+
 # Jarvis is a cloud-first assistant. These optional local-ML stacks are not
 # required by the packaged chat/self-coding runtime and can make PyInstaller
 # consume several GB of RAM while analyzing the dependency graph.
@@ -61,10 +67,13 @@ def jarvis_pyinstaller_args(name: str, windowed: bool, onefile: bool, distpath: 
         "--hidden-import", "webview",
         "--hidden-import", "tkinter",
         "--hidden-import", "tkinter.font",
+        # Critical: the real production frontend must travel inside the frozen
+        # executable at desktop/dist so app.py can serve it after extraction.
+        "--add-data", f"{DIST}{DIST_SEPARATOR}desktop/dist",
     ]
 
     if (ROOT / "prompts").exists():
-        args += ["--add-data", f"{ROOT / 'prompts'};prompts"]
+        args += ["--add-data", f"{ROOT / 'prompts'}{DIST_SEPARATOR}prompts"]
     args.append(str(ENTRY))
     for module in OPTIONAL_LOCAL_ML:
         args += ["--exclude-module", module]
