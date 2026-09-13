@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Discover remote AI authentication without exposing credentials.
 
 This utility is deliberately passive: it reports which provider credential
@@ -7,6 +5,8 @@ sources appear to exist and delegates actual authentication/model selection to
 OpenCode. It never prints secret values and never attempts to obtain or bypass
 credentials.
 """
+
+from __future__ import annotations
 
 import json
 import os
@@ -78,15 +78,13 @@ def opencode_auth_list() -> str | None:
 
 
 def main() -> int:
-    print("Jarvis remote-provider bootstrap")
-    print(f"OpenCode executable: {'yes' if opencode_available() else 'no'}")
-    print(f"OpenCode auth command: {opencode_auth_list() or 'unavailable'}")
-    print("Environment credential sources:")
-    for name, present in env_candidates().items():
-        print(f"  {name}: {'present' if present else 'not detected'}")
-    configured = opencode_auth_providers()
-    print("OpenCode auth providers: " + (", ".join(configured) if configured else "none detected"))
-    print("No local model is selected by this utility.")
+    payload = {
+        "opencode_available": opencode_available(),
+        "opencode_auth": opencode_auth_list(),
+        "env_candidates": env_candidates(),
+        "opencode_auth_providers": opencode_auth_providers(),
+    }
+    print(json.dumps(payload, sort_keys=True))
     return 0
 
 
