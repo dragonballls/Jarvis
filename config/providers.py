@@ -62,7 +62,7 @@ def _resolve_api_key(toml_key: str, env_var: str) -> str:
 
 def load_provider_config() -> dict[str, Any]:
     if not os.path.exists(CONFIG_PATH):
-        cfg: dict[str, Any] = {"default": {"provider": "groq"}}
+        cfg: dict[str, Any] = {"default": {"provider": "zen_coder"}}
     else:
         with open(CONFIG_PATH, "rb") as f:
             cfg = tomllib.load(f)
@@ -99,11 +99,11 @@ def load_provider_config() -> dict[str, Any]:
         {
             "api_key": "",
             "base_url": "https://opencode.ai/zen/v1",
-            "model": "mimo-v2.5-free",
+            "model": "big-pickle",
             "fallback_provider": "groq",
             "timeout": 60,
             "temperature": 0.2,
-            "max_tokens": 8192,
+            "max_tokens": 4096,
             "provider_name": "zen_coder",
         },
     )
