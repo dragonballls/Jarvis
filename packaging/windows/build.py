@@ -7,7 +7,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / "build" / "windows"
 DIST = ROOT / "desktop" / "dist"
-ENTRY = ROOT / "packaging" / "windows" / "native_app.py"
+# Package the real Windows runtime entry point. native_app.py was a minimal
+# fallback shell and could produce the old bare-bones desktop experience.
+ENTRY = ROOT / "packaging" / "windows" / "app.py"
 
 # Jarvis is a cloud-first assistant. These optional local-ML stacks are not
 # required by the packaged chat/self-coding runtime and can make PyInstaller
@@ -35,7 +37,6 @@ def current_commit() -> str:
 
 
 def jarvis_pyinstaller_args(name: str, windowed: bool, onefile: bool, distpath: Path, workpath: Path) -> list[str]:
-    separator = ";"
     args = [
         "pyinstaller", "--noconfirm", "--clean",
         "--windowed" if windowed else "--console",
@@ -57,17 +58,13 @@ def jarvis_pyinstaller_args(name: str, windowed: bool, onefile: bool, distpath: 
         "--hidden-import", "emrg",
         "--hidden-import", "desktop.api_server",
         "--hidden-import", "desktop",
+        "--hidden-import", "webview",
         "--hidden-import", "tkinter",
         "--hidden-import", "tkinter.font",
-        # The top-level project package is named `packaging`, which collides
-        # with PyPI's `packaging` distribution. Bundle the Windows runtime as
-        # data and load it by file path from native_app.py to avoid that
-        # ambiguity inside a frozen executable.
-        "--add-data", f"{ROOT / 'packaging' / 'windows' / 'app.py'}{separator}packaging/windows",
     ]
 
     if (ROOT / "prompts").exists():
-        args += ["--add-data", f"{ROOT / 'prompts'}{separator}prompts"]
+        args += ["--add-data", f"{ROOT / 'prompts'};prompts"]
     args.append(str(ENTRY))
     for module in OPTIONAL_LOCAL_ML:
         args += ["--exclude-module", module]
