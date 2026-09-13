@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 from functools import wraps
 from pathlib import Path
@@ -66,6 +67,29 @@ def _tts_voice_id() -> str:
 
 def _tts_model_id() -> str:
     return os.environ.get("JARVIS_TTS_MODEL_ID", _DEFAULT_TTS_MODEL).strip() or _DEFAULT_TTS_MODEL
+
+
+def _prepare_tts_text(text: str) -> str:
+    """Shape ordinary assistant text for a calm, precise British-assistant delivery."""
+    value = re.sub(r"\s+", " ", text.replace("\r", " ").replace("\n", " ")).strip()
+    if not value:
+        return value
+    # Give common abbreviations a spoken form without changing the visible assistant text.
+    replacements = {
+        r"\bAI\b": "A.I.",
+        r"\bAPI\b": "A.P.I.",
+        r"\bGPU\b": "G.P.U.",
+        r"\bCPU\b": "C.P.U.",
+        r"\bUI\b": "U.I.",
+        r"\bURL\b": "U.R.L.",
+        r"\bSSH\b": "S.S.H.",
+        r"\bGitHub\b": "GitHub",
+    }
+    for pattern, replacement in replacements.items():
+        value = re.sub(pattern, replacement, value)
+    # Avoid overly clipped delivery when several clauses are joined by punctuation.
+    value = re.sub(r"\s*[;]\s*", "; ", value)
+    return value
 
 
 app = Quart(__name__)
@@ -237,7 +261,8 @@ async def test_providers():
 @app.route(f"{API_PREFIX}/voice/status")
 @require_auth
 async def voice_status():
-    return jsonify({"provider": "elevenlabs", "configured": bool(os.environ.get("ELEVENLABS_API_KEY", "").strip() or get_key("elevenlabs")), "voice_id": _tts_voice_id(), "voice_name": "Eldrin - Crisp British Baritone", "model_id": _tts_model_id(), "fallback": "browser-speech-synthesis"})
+    configured = bool(os.environ.get("ELEVENLABS_API_KEY", "").strip() or get_key("elevenlabs"))
+    return jsonify({"provider": "elevenlabs", "configured": configured, "voice_id_configured": bool(_tts_voice_id()), "voice_id": _tts_voice_id(), "voice_name": "Eldrin - Crisp British Baritone", "model_id": _tts_model_id(), "fallback": "browser-speech-synthesis"})
 
 
 @app.route(f"{API_PREFIX}/voice/synthesize", methods=["POST"])
@@ -247,7 +272,7 @@ async def voice_synthesize():
     text = data.get("text", "")
     if not isinstance(text, str) or not text.strip():
         return jsonify({"error": "text is required"}), 422
-    text = text.strip()
+    text = _prepare_tts_text(text)
     if len(text) > _MAX_TTS_LENGTH:
         return jsonify({"error": f"text exceeds {_MAX_TTS_LENGTH} characters"}), 422
     api_key = os.environ.get("ELEVENLABS_API_KEY", "").strip() or get_key("elevenlabs")
@@ -257,7 +282,7 @@ async def voice_synthesize():
     import urllib.error
     import urllib.parse
     import urllib.request
-    payload = json.dumps({"text": text, "model_id": _tts_model_id(), "voice_settings": {"stability": 0.55, "similarity_boost": 0.80, "style": 0.0, "use_speaker_boost": True, "speed": 0.96}}).encode("utf-8")
+    payload = json.dumps({"text": text, "model_id": _tts_model_id(), "voice_settings": {"stability": 0.68, "similarity_boost": 0.86, "style": 0.08, "use_speaker_boost": True, "speed": 0.94}}).encode("utf-8")
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{urllib.parse.quote(_tts_voice_id(), safe='')}?output_format=mp3_44100_128"
     req = urllib.request.Request(url, data=payload, method="POST", headers={"xi-api-key": api_key, "Content-Type": "application/json", "Accept": "audio/mpeg"})
     try:
