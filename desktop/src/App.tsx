@@ -11,6 +11,7 @@ import {
   type ProviderStatus,
   type ProviderTestResult,
 } from './core/api'
+import './provider-settings.css'
 
 const SELF_CODING_GOAL =
   'Continue improving Jarvis. Inspect the current Jarvis workspace, identify the highest-value safe improvement, implement it, verify it, preserve existing working behavior, and leave the workspace in a working state. Work incrementally and keep durable progress in the workspace so another run can continue after interruption.'
