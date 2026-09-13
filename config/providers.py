@@ -5,7 +5,7 @@ from typing import Any
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "providers.toml")
 
 
-# â”€â”€â”€ Env var helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── Env var helpers ────────────────────────────────────────────────────────
 def _load_windows_user_env(key: str) -> str:
     """Read a user-level environment variable directly on Windows.
 
@@ -116,10 +116,15 @@ def load_provider_config() -> dict[str, Any]:
             "model": "qwen/qwen3.8-27b",
             "timeout": 60,
             "temperature": 0.2,
-            "max_tokens": 8192,
+            "max_tokens": 512,
             "provider_name": "groq",
         },
     )
+    # Existing configuration may have supplied a larger Groq budget. Keep the
+    # free-tier request safely below the observed 1,000 OTPM ceiling.
+    if isinstance(cfg.get("groq"), dict):
+        cfg["groq"]["max_tokens"] = min(int(cfg["groq"].get("max_tokens", 512) or 512), 512)
+
     # Override API keys from environment variables. Secrets never need to be
     # committed to the repository; user-level environment variables are preferred.
     env_map = {
@@ -170,4 +175,3 @@ def get_provider_config(name: str | None = None) -> dict[str, Any]:
     if name is None:
         name = get_active_provider(config)
     return config.get(name, {})
-
