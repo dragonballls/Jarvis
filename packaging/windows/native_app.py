@@ -20,6 +20,7 @@ from packaging.windows.app import (
     log,
     prepare_self_coding_workspace,
     run_api_server_thread,
+    smoke_test,
     wait_for_port,
 )
 
@@ -156,6 +157,9 @@ def run_native_ui(workspace: Path) -> None:
 
 
 def main() -> None:
+    if "--smoke-test" in os.sys.argv:
+        smoke_test()
+        return
     if not _acquire_single_instance():
         return
     workspace = prepare_self_coding_workspace()
