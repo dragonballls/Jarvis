@@ -1,11 +1,11 @@
-import os
+﻿import os
 import tomllib
 from typing import Any
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "providers.toml")
 
 
-# ─── Env var helpers ─────────────────────────────────────────────
+# â”€â”€â”€ Env var helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def _load_windows_user_env(key: str) -> str:
     """Read a user-level environment variable directly on Windows.
 
@@ -62,7 +62,7 @@ def _resolve_api_key(toml_key: str, env_var: str) -> str:
 
 def load_provider_config() -> dict[str, Any]:
     if not os.path.exists(CONFIG_PATH):
-        cfg: dict[str, Any] = {"default": {"provider": "openrouter"}}
+        cfg: dict[str, Any] = {"default": {"provider": "groq"}}
     else:
         with open(CONFIG_PATH, "rb") as f:
             cfg = tomllib.load(f)
@@ -170,3 +170,4 @@ def get_provider_config(name: str | None = None) -> dict[str, Any]:
     if name is None:
         name = get_active_provider(config)
     return config.get(name, {})
+
