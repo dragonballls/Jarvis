@@ -25,7 +25,7 @@ class TestHealth:
         assert response.status_code == 200
         assert data["status"] == "ok"
         assert data["name"] == "Jarvis"
-        assert data["features"] == ["conversation", "self_coding", "openhands", "emrg_evolution"]
+        assert data["features"] == ["conversation", "self_coding", "provider_settings", "voice", "openhands", "emrg_evolution"]
         assert data["engines"]["opencode"] is True
 
 
