@@ -5,7 +5,6 @@ httpx>=0.28.1
 openai>=1.0.0
 cachetools>=7.1.7
 yfinance>=1.6.0
-sentence-transformers>=5.7.0
 requests>=2.34.2
 pyttsx3>=2.99
 pillow>=12.3.0
@@ -13,7 +12,7 @@ pyautogui>=0.9.54
 
 # Agent engines
 openhands-sdk==1.47.0
-emrg==0.2.94
+emrg @ git+https://github.com/dragonballls/emrg.git@master
 
 # Development
 pytest>=9.1.1
