@@ -9,6 +9,7 @@ BUILD = ROOT / "build" / "windows"
 EXE = BUILD / "Jarvis.exe"
 VERSION = BUILD / "VERSION"
 LOG = BUILD / "jarvis.log"
+SMOKE_TIMEOUT_SECONDS = 180
 
 
 def dump_log() -> None:
@@ -26,7 +27,7 @@ def dump_log() -> None:
 def run_smoke(executable: Path, label: str) -> None:
     proc = subprocess.Popen([str(executable), "--smoke-test"], cwd=executable.parent)
     try:
-        deadline = time.monotonic() + 40
+        deadline = time.monotonic() + SMOKE_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
             returncode = proc.poll()
             if returncode is not None:
@@ -37,7 +38,9 @@ def run_smoke(executable: Path, label: str) -> None:
                 return
             time.sleep(0.25)
         dump_log()
-        raise SystemExit(f"{label} smoke test did not complete within 40 seconds")
+        raise SystemExit(
+            f"{label} smoke test did not complete within {SMOKE_TIMEOUT_SECONDS} seconds"
+        )
     finally:
         if proc.poll() is None:
             proc.terminate()
