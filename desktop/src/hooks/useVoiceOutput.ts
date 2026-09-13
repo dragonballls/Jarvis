@@ -57,16 +57,23 @@ export function useVoiceOutput(): UseVoiceOutputReturn {
     cloudSpeakingRef.current = false
   }, [])
 
+  const enqueueBrowserSpeech = useCallback((text: string, options?: SpeakOptions) => {
+    if (!synthRef.current) return false
+    speakQueueRef.current.push({ text, options })
+    processBrowserQueue()
+    return true
+  }, [])
+
   const processBrowserQueue = useCallback(() => {
-    if (cloudVoiceReady || speakingRef.current || speakQueueRef.current.length === 0) return
+    if (speakingRef.current || speakQueueRef.current.length === 0) return
     const synth = synthRef.current
     if (!synth) return
     const item = speakQueueRef.current.shift()!
     speakingRef.current = true
     const utterance = new SpeechSynthesisUtterance(item.text)
     if (selectedVoiceRef.current) utterance.voice = selectedVoiceRef.current
-    utterance.rate = item.options?.rate ?? 1
-    utterance.pitch = item.options?.pitch ?? 1
+    utterance.rate = item.options?.rate ?? 0.94
+    utterance.pitch = item.options?.pitch ?? 0.82
     utterance.volume = 1
     utterance.onstart = () => setStatus('speaking')
     utterance.onend = () => {
@@ -74,11 +81,15 @@ export function useVoiceOutput(): UseVoiceOutputReturn {
       if (speakQueueRef.current.length > 0) processBrowserQueue()
       else setStatus('idle')
     }
-    utterance.onerror = () => { speakingRef.current = false; setStatus('idle') }
+    utterance.onerror = () => {
+      speakingRef.current = false
+      if (speakQueueRef.current.length > 0) processBrowserQueue()
+      else setStatus('idle')
+    }
     utterance.onpause = () => setStatus('paused')
     utterance.onresume = () => setStatus('speaking')
     synth.speak(utterance)
-  }, [cloudVoiceReady])
+  }, [])
 
   const speakWithCloudVoice = useCallback(async (text: string, options?: SpeakOptions) => {
     if (!cloudVoiceReady) return false
@@ -87,20 +98,21 @@ export function useVoiceOutput(): UseVoiceOutputReturn {
       const blob = await synthesizeVoice(text)
       const url = URL.createObjectURL(blob)
       const audio = new Audio(url)
+      audio.preload = 'auto'
       audio.playbackRate = options?.rate && options.rate > 0 ? options.rate : 1
       audioRef.current = audio
       audioUrlRef.current = url
       cloudSpeakingRef.current = true
       setStatus('speaking')
       audio.onended = () => { cleanupAudio(); setStatus('idle') }
-      audio.onerror = () => { cleanupAudio(); setStatus('idle') }
+      audio.onerror = () => { cleanupAudio(); enqueueBrowserSpeech(text, options) }
       await audio.play()
       return true
     } catch {
       cleanupAudio()
-      return false
+      return enqueueBrowserSpeech(text, options)
     }
-  }, [cloudVoiceReady, cleanupAudio])
+  }, [cloudVoiceReady, cleanupAudio, enqueueBrowserSpeech])
 
   const speak = useCallback((text: string, options?: SpeakOptions) => {
     if (!isSupported || !enabled || !text.trim()) return
@@ -108,9 +120,8 @@ export function useVoiceOutput(): UseVoiceOutputReturn {
       void speakWithCloudVoice(text.trim(), options)
       return
     }
-    speakQueueRef.current.push({ text, options })
-    processBrowserQueue()
-  }, [isSupported, enabled, cloudVoiceReady, speakWithCloudVoice, processBrowserQueue])
+    enqueueBrowserSpeech(text.trim(), options)
+  }, [isSupported, enabled, cloudVoiceReady, speakWithCloudVoice, enqueueBrowserSpeech])
 
   const stop = useCallback(() => {
     synthRef.current?.cancel()
@@ -171,7 +182,7 @@ export function useVoiceOutput(): UseVoiceOutputReturn {
   useEffect(() => {
     let cancelled = false
     void getVoiceStatus().then(info => {
-      if (!cancelled) setCloudVoiceReady(info.provider === 'elevenlabs' && info.configured)
+      if (!cancelled) setCloudVoiceReady(info.provider === 'elevenlabs' && info.configured && Boolean(info.voice_id_configured))
     }).catch(() => { if (!cancelled) setCloudVoiceReady(false) })
     return () => { cancelled = true }
   }, [])
