@@ -20,6 +20,7 @@ PROVIDERS = {
     "openrouter": "OPENROUTER_API_KEY",
     "zen_coder": "ZEN_CODER_API_KEY",
     "groq": "GROQ_API_KEY",
+    "elevenlabs": "ELEVENLABS_API_KEY",
 }
 
 
