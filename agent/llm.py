@@ -30,6 +30,23 @@ def _get_named_provider(name: str):
 def _is_retryable_provider_error(event: dict) -> bool:
     text = str(event.get("error") or event.get("content") or "").lower()
 
+    # Authentication/configuration failures are deterministic and must not
+    # trigger retries or provider fallback loops.
+    non_retryable_markers = (
+        "invalid api key",
+        "invalid_api_key",
+        "incorrect api key",
+        "invalid authentication",
+        "authentication failed",
+        "unauthorized",
+        "401",
+        "missing authentication header",
+        "forbidden",
+        "403",
+    )
+    if any(marker in text for marker in non_retryable_markers):
+        return False
+
     retryable_markers = (
         "429",
         "rate limit",
@@ -45,8 +62,6 @@ def _is_retryable_provider_error(event: dict) -> bool:
         "502",
         "503",
         "504",
-        "invalid api key",
-        "missing authentication header",
     )
 
     return any(marker in text for marker in retryable_markers)
@@ -145,7 +160,7 @@ def chat(
                 return
             yield {
                 "type": "tokens",
-                "content": f"[{provider_name} unavailable; switching to {fallback_name}â€¦]\n\n",
+                "content": f"[{provider_name} unavailable; switching to {fallback_name}…]\n\n",
             }
             try:
                 yield from fallback.chat(messages, tools=tools)
@@ -162,7 +177,7 @@ def chat(
                 return
             yield {
                 "type": "tokens",
-                "content": f"[{provider_name} unavailable; switching to {fallback_name}â€¦]\n\n",
+                "content": f"[{provider_name} unavailable; switching to {fallback_name}…]\n\n",
             }
             try:
                 yield from fallback.chat(messages, tools=tools)
@@ -203,7 +218,7 @@ def chat(
 
     yield {
         "type": "tokens",
-        "content": (f"[{selected_name} unavailable; switching to {fallback_name}â€¦]\n\n"),
+        "content": (f"[{selected_name} unavailable; switching to {fallback_name}…]\n\n"),
     }
 
     try:
