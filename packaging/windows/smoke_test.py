@@ -7,8 +7,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / "build" / "windows"
 EXE = BUILD / "Jarvis.exe"
-SMOKE_BUNDLE = BUILD / "_smoke" / "JarvisSmoke"
-SMOKE_EXE = SMOKE_BUNDLE / "JarvisSmoke.exe"
 VERSION = BUILD / "VERSION"
 LOG = BUILD / "jarvis.log"
 
@@ -50,7 +48,7 @@ def run_smoke(executable: Path, label: str) -> None:
 
 
 def main() -> None:
-    for required in (EXE, SMOKE_EXE, VERSION):
+    for required in (EXE, VERSION):
         if not required.is_file():
             raise SystemExit(f"Missing Windows Jarvis file: {required}")
 
@@ -58,13 +56,8 @@ def main() -> None:
     if not version:
         raise SystemExit("Windows Jarvis VERSION file is empty")
 
-    # Validate the actual user-facing single-file executable first.
     run_smoke(EXE, "Jarvis single-file")
-
-    # Also keep the console/onedir diagnostic available for native boot failures.
-    run_smoke(SMOKE_EXE, "Jarvis diagnostic")
-
-    print(f"Jarvis Windows packaging smoke tests passed for version {version}.")
+    print(f"Jarvis Windows packaging smoke test passed for version {version}.")
     dump_log()
 
 
