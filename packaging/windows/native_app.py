@@ -3,16 +3,9 @@ from __future__ import annotations
 import ctypes
 import json
 import os
-import queue
-import threading
-import traceback
-import tkinter as tk
 from pathlib import Path
-from tkinter import font as tkfont
 from urllib.request import Request, urlopen
 
-from agent.evolution import run_evolution_cycle
-from core.opencode_agent import openhands_available
 from packaging.windows.app import (
     API_HOST,
     API_PORT,
@@ -68,6 +61,9 @@ def smoke_test() -> None:
     if payload.get("status") != "ok" or payload.get("name") != "Jarvis":
         raise RuntimeError(f"Unexpected health response: {payload}")
     log("SMOKE: API health OK")
+
+    from core.opencode_agent import openhands_available
+
     log(f"SMOKE: OpenHands import availability={openhands_available()}")
     log("Jarvis smoke test passed")
 
@@ -77,6 +73,8 @@ def _post_autopilot(goal: str, workspace: Path | None) -> None:
         log("Self-coding stopped: workspace is unavailable")
         return
     try:
+        from agent.evolution import run_evolution_cycle
+
         for event in run_evolution_cycle(workspace, goal):
             content = str(event.get("content") or event.get("error") or event.get("output") or "")
             if content:
@@ -84,6 +82,8 @@ def _post_autopilot(goal: str, workspace: Path | None) -> None:
             if event.get("event"):
                 log(f"SELF-CODING EVENT: {event}")
     except Exception:
+        import traceback
+
         log("Self-coding startup task failed:\n" + traceback.format_exc())
 
 
@@ -111,6 +111,11 @@ def _post_chat(message: str, session_id: str) -> list[str]:
 
 
 def run_native_ui(workspace: Path) -> None:
+    import queue
+    import tkinter as tk
+    import threading
+    from tkinter import font as tkfont
+
     events: queue.Queue[tuple[str, object]] = queue.Queue()
     root = tk.Tk()
     root.title("Jarvis")
@@ -197,6 +202,8 @@ def main() -> None:
     run_api_server_thread()
     wait_for_port(API_HOST, API_PORT, timeout=30.0)
 
+    import threading
+
     threading.Thread(
         target=_auto_update_loop,
         args=(workspace,),
@@ -222,5 +229,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception:
+        import traceback
+
         log(traceback.format_exc())
         raise
