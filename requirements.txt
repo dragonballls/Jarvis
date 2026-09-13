@@ -11,6 +11,10 @@ pyttsx3>=2.99
 pillow>=12.3.0
 pyautogui>=0.9.54
 
+# Agent engines
+openhands-sdk==1.47.0
+emrg==0.2.94
+
 # Development
 pytest>=9.1.1
 pytest-cov>=7.1.0
