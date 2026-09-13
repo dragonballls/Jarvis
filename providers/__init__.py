@@ -1,7 +1,10 @@
 import providers.ollama  # noqa: F401 — registers itself via registry
 import providers.openai_compat  # noqa: F401 — registers openai/openrouter via registry
 from config.providers import get_active_provider, get_provider_config
-from providers.registry import get_provider_class, list_providers
+from providers.openai_compat import OpenAICompatibleProvider
+from providers.registry import get_provider_class, list_providers, register_provider
+
+register_provider("groq", OpenAICompatibleProvider)
 
 
 def get_provider(name: str | None = None):
@@ -13,7 +16,3 @@ def get_provider(name: str | None = None):
     cls = get_provider_class(name)
     cfg = get_provider_config(name)
     return cls(cfg)
-
-from providers.openai_compat import OpenAICompatibleProvider
-from providers.registry import register_provider
-register_provider("groq", OpenAICompatibleProvider)
