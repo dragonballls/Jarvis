@@ -153,6 +153,8 @@ export interface VoiceStatus {
   provider: string
   configured: boolean
   voice_id_configured: boolean
+  voice_id: string
+  voice_name: string
   model_id: string
   fallback: string
 }
