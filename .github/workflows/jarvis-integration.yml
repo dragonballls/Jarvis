@@ -24,8 +24,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Install dependencies
-        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Install Mark 53 test dependencies
+        run: python -m pip install --disable-pip-version-check pytest httpx
       - name: Verify Mark 53 component
         run: |
           set -euo pipefail
@@ -41,8 +41,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Install dependencies
-        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Install Mark updater test dependencies
+        run: python -m pip install --disable-pip-version-check pytest
       - name: Verify Mark updater boundary
         run: |
           set -euo pipefail
@@ -58,7 +58,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Install dependencies
+      - name: Install self-coding dependencies
         run: python -m pip install --disable-pip-version-check -r requirements.txt
       - name: Verify self-coding boundary
         run: |
