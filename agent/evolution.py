@@ -5,6 +5,7 @@ from collections.abc import Generator
 from pathlib import Path
 
 from core.opencode_agent import run_coding_agent
+from self_coding.git_boundary import record_verified_change
 
 
 STAGES = ("prepare", "review", "discover", "improve", "verify", "record")
@@ -71,12 +72,7 @@ def _verify(workspace: Path) -> Generator[dict, None, bool]:
 
 
 def run_evolution_cycle(workspace: Path, goal: str) -> Generator[dict, None, None]:
-    """Run an EMRG-style bounded self-improvement cycle.
-
-    The cycle mirrors EMRG's prepare/review/discover/improve/verify/record loop,
-    while keeping Jarvis's existing remote-only coding engine and requiring a
-    clean starting worktree before autonomous mutation begins.
-    """
+    """Run an EMRG-style bounded self-improvement cycle."""
     workspace = workspace.resolve()
     yield {"type": "autopilot", "event": "evolution", "stage": "prepare", "stages": list(STAGES)}
 
@@ -101,7 +97,8 @@ def run_evolution_cycle(workspace: Path, goal: str) -> Generator[dict, None, Non
         "safe improvement, implement only that improvement, verify it, and summarize "
         "the result. Preserve existing functionality. Never modify secrets, credentials, "
         "unrelated files, or system settings. Do not install or invoke a local LLM. "
-        "Only use remote AI. Do not commit unless verification succeeds.\n\nGOAL:\n" + goal
+        "Only use remote AI. Do not commit or push changes yourself; return the workspace "
+        "with the verified modifications for Jarvis's isolated Git recording boundary.\n\nGOAL:\n" + goal
     )
 
     yield {"type": "autopilot", "event": "evolution", "stage": "improve"}
@@ -118,16 +115,26 @@ def run_evolution_cycle(workspace: Path, goal: str) -> Generator[dict, None, Non
         yield {"type": "done", "content": "Evolution cycle stopped because verification failed.", "final": True}
         return
 
-    code, status = _git(workspace, "status", "--short")
-    if code != 0:
-        yield {"type": "done", "content": "Evolution finished, but Git status could not be read.", "final": True}
+    result = record_verified_change(workspace, goal)
+    if not result.get("ok"):
+        yield {
+            "type": "autopilot",
+            "event": "verification_failed",
+            "check": f"self-coding Git record ({result.get('stage', 'unknown')})",
+            "output": str(result.get("error", "Unable to record verified change.")),
+        }
+        yield {
+            "type": "done",
+            "content": "Evolution cycle verified the code but could not safely record the change in GitHub.",
+            "final": True,
+        }
         return
 
     yield {
         "type": "autopilot",
         "event": "evolution",
         "stage": "record",
-        "status": "verified",
-        "changes": status,
+        "status": str(result.get("status", "recorded")),
+        "commit": result.get("commit", ""),
     }
-    yield {"type": "done", "content": "Evolution cycle completed and passed its verification gates.", "final": True}
+    yield {"type": "done", "content": "Evolution cycle completed, verified, and recorded successfully.", "final": True}
