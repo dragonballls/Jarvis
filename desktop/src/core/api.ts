@@ -66,10 +66,7 @@ async function streamEndpoint(
   try {
     const res = await fetch(`${API_BASE}${path}`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...authHeaders(),
-      },
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify(body),
       signal: controller.signal,
     })
@@ -90,36 +87,22 @@ async function streamEndpoint(
 
     const decoder = new TextDecoder()
     let buffer = ''
-
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
-
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split('\n')
       buffer = lines.pop() || ''
-
       for (const line of lines) {
         if (!line.trim()) continue
-        try {
-          const event = JSON.parse(line)
-          onEvent(event)
-        } catch {
-          // skip malformed lines
-        }
+        try { onEvent(JSON.parse(line)) } catch {}
       }
     }
 
     buffer += decoder.decode()
     if (buffer.trim()) {
-      try {
-        const event = JSON.parse(buffer)
-        onEvent(event)
-      } catch {
-        // skip malformed final event
-      }
+      try { onEvent(JSON.parse(buffer)) } catch {}
     }
-
     onDone()
   } catch (err: any) {
     if (err?.name !== 'AbortError') {
@@ -164,6 +147,35 @@ export async function removeProviderKey(provider: string): Promise<{ success: bo
 }
 export async function testProviders(): Promise<{ providers: ProviderTestResult[] }> {
   return fetchApi('/providers/test', { method: 'POST' })
+}
+
+export interface VoiceStatus {
+  provider: string
+  configured: boolean
+  voice_id_configured: boolean
+  model_id: string
+  fallback: string
+}
+export async function getVoiceStatus(): Promise<VoiceStatus> { return fetchApi('/voice/status') }
+
+export async function synthesizeVoice(text: string): Promise<Blob> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 35_000)
+  try {
+    const res = await fetch(`${API_BASE}/voice/synthesize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ text }),
+      signal: controller.signal,
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      throw { status: res.status, message: body?.error || res.statusText, body } as ApiError
+    }
+    return await res.blob()
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export async function getMetrics(): Promise<any> { return fetchApi('/metrics') }
@@ -217,113 +229,3 @@ export async function deleteCustomTool(name: string): Promise<{ success?: boolea
 export interface PrivacyStatus { enabled: boolean; local_provider: string; blocked_tools: string[] }
 export async function getPrivacyStatus(): Promise<PrivacyStatus> { return fetchApi('/privacy') }
 export async function setPrivacy(enabled: boolean): Promise<PrivacyStatus> { return fetchApi('/privacy', { method: 'POST', body: JSON.stringify({ enabled }) }) }
-
-export async function getDiaryRecent(): Promise<{ days: DiaryDay[] }> { return fetchApi('/diary/recent') }
-export async function getDiaryPage(dateStr?: string): Promise<DiaryPage> { const q = dateStr ? `?date=${encodeURIComponent(dateStr)}` : ''; return fetchApi(`/diary${q}`) }
-export async function writeNightlyDigest(): Promise<{ path: string; success: boolean }> { return fetchApi('/diary/nightly', { method: 'POST' }) }
-export async function getGoogleAuth(): Promise<any> { return fetchApi('/auth/google') }
-export async function getCalendarEvents(): Promise<any> { return fetchApi('/calendar/events') }
-export async function getEmailInbox(): Promise<any> { return fetchApi('/email/inbox') }
-export async function getEmailUnread(): Promise<any> { return fetchApi('/email/unread') }
-export async function getAlerts(): Promise<{ alerts: any[]; count: number }> { return fetchApi('/alerts') }
-
-export async function getAutomations(): Promise<{ automations: any[] }> { return fetchApi('/automations') }
-export async function createAutomation(data: { name: string; trigger_type: string; trigger_config: Record<string, any>; action: string; action_params?: Record<string, any> }): Promise<any> { return fetchApi('/automations', { method: 'POST', body: JSON.stringify(data) }) }
-export async function updateAutomation(id: string, data: Record<string, any>): Promise<any> { return fetchApi(`/automations/${id}`, { method: 'PUT', body: JSON.stringify(data) }) }
-export async function deleteAutomation(id: string): Promise<any> { return fetchApi(`/automations/${id}`, { method: 'DELETE' }) }
-export async function toggleAutomation(id: string): Promise<any> { return fetchApi(`/automations/${id}/toggle`, { method: 'POST' }) }
-export async function triggerAutomation(id: string): Promise<any> { return fetchApi(`/automations/${id}/trigger`, { method: 'POST' }) }
-
-export async function analyzeVisionImage(image: string, prompt?: string): Promise<{ description: string; text: string | null; timestamp: number }> { return fetchApi('/vision/analyze', { method: 'POST', body: JSON.stringify({ image, prompt }) }) }
-export async function getVisionScreen(): Promise<{ description: string; text: string | null; width: number; height: number; timestamp: number }> { return fetchApi('/vision/screen') }
-
-export type ServerEvent = { type: string; data: any }
-
-export function connectEventSource(onEvent: (event: ServerEvent) => void, onError?: () => void, onStatus?: (connected: boolean) => void): () => void {
-  let es: EventSource | null = null
-  let closed = false
-  let retryDelay = 1000
-  let retryTimer: ReturnType<typeof setTimeout> | null = null
-  let dropTimer: ReturnType<typeof setTimeout> | null = null
-  let reportedOffline = false
-  const MAX_RETRY = 30000
-  const DROP_GRACE = 4000
-
-  function clearDropTimer() {
-    if (dropTimer !== null) {
-      clearTimeout(dropTimer)
-      dropTimer = null
-    }
-  }
-
-  function connect() {
-    if (closed) return
-    retryTimer = null
-    const key = getApiKey()
-    const url = key ? `${API_BASE}/events?key=${encodeURIComponent(key)}` : `${API_BASE}/events`
-    es = new EventSource(url)
-
-    es.onmessage = (msg) => {
-      try {
-        const parsed = JSON.parse(msg.data)
-        onEvent(parsed)
-      } catch {
-        // skip malformed messages
-      }
-    }
-
-    es.onopen = () => {
-      retryDelay = 1000
-      clearDropTimer()
-      reportedOffline = false
-      onStatus?.(true)
-    }
-
-    es.onerror = () => {
-      es?.close()
-      es = null
-      if (closed) return
-      if (!reportedOffline && dropTimer === null) {
-        dropTimer = setTimeout(() => {
-          dropTimer = null
-          reportedOffline = true
-          onStatus?.(false)
-          onError?.()
-        }, DROP_GRACE)
-      }
-      const delay = retryDelay
-      retryDelay = Math.min(retryDelay * 2, MAX_RETRY)
-      retryTimer = setTimeout(connect, delay)
-    }
-  }
-
-  function reconnectNow() {
-    if (closed || es !== null) return
-    if (retryTimer !== null) {
-      clearTimeout(retryTimer)
-      retryTimer = null
-    }
-    retryDelay = 1000
-    connect()
-  }
-
-  function onVisibilityChange() {
-    if (document.visibilityState === 'visible') reconnectNow()
-  }
-
-  window.addEventListener('online', reconnectNow)
-  document.addEventListener('visibilitychange', onVisibilityChange)
-
-  connect()
-
-  return () => {
-    closed = true
-    window.removeEventListener('online', reconnectNow)
-    document.removeEventListener('visibilitychange', onVisibilityChange)
-    if (retryTimer !== null) clearTimeout(retryTimer)
-    retryTimer = null
-    clearDropTimer()
-    es?.close()
-    es = null
-  }
-}
