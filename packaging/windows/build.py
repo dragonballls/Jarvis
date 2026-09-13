@@ -59,6 +59,11 @@ def jarvis_pyinstaller_args(name: str, windowed: bool, onefile: bool, distpath: 
         "--hidden-import", "desktop",
         "--hidden-import", "tkinter",
         "--hidden-import", "tkinter.font",
+        # The top-level project package is named `packaging`, which collides
+        # with PyPI's `packaging` distribution. Bundle the Windows runtime as
+        # data and load it by file path from native_app.py to avoid that
+        # ambiguity inside a frozen executable.
+        "--add-data", f"{ROOT / 'packaging' / 'windows' / 'app.py'}{separator}packaging/windows",
     ]
 
     if (ROOT / "prompts").exists():
