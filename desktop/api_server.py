@@ -1,4 +1,4 @@
-"""Minimal local API for Jarvis: conversation, self-coding, and provider settings."""
+"""Minimal local API for Jarvis: conversation, self-coding, provider settings, and voice."""
 
 import argparse
 import asyncio
@@ -10,18 +10,21 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from quart import Quart, jsonify, make_response, request
+from quart import Quart, Response, jsonify, make_response, request
 from quart_cors import cors
 
 from agent.core import Agent
 from agent.evolution import run_evolution_cycle
 from agent.self_coding_runtime import is_self_coding_goal
-from desktop.provider_credentials import PROVIDERS, delete_key, public_status, save_key
+from desktop.provider_credentials import PROVIDERS, delete_key, get_key, public_status, save_key
 
 API_PREFIX = "/api/v1"
 MINIMAL_MODE = True
 _API_SECRET = os.environ.get("API_SECRET", "")
 _MAX_MESSAGE_LENGTH = 10_000
+_MAX_TTS_LENGTH = 8_000
+_DEFAULT_TTS_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"
+_DEFAULT_TTS_MODEL = "eleven_flash_v2_5"
 
 
 def require_auth(f):
@@ -57,6 +60,14 @@ def run_coding_agent(workspace: str | Path, goal: str):
     return run_evolution_cycle(Path(workspace), goal)
 
 
+def _tts_voice_id() -> str:
+    return os.environ.get("JARVIS_TTS_VOICE_ID", _DEFAULT_TTS_VOICE_ID).strip() or _DEFAULT_TTS_VOICE_ID
+
+
+def _tts_model_id() -> str:
+    return os.environ.get("JARVIS_TTS_MODEL_ID", _DEFAULT_TTS_MODEL).strip() or _DEFAULT_TTS_MODEL
+
+
 app = Quart(__name__)
 app = cors(
     app,
@@ -85,6 +96,8 @@ async def reject_non_core_api():
         f"{API_PREFIX}/health",
         f"{API_PREFIX}/providers",
         f"{API_PREFIX}/providers/test",
+        f"{API_PREFIX}/voice/status",
+        f"{API_PREFIX}/voice/synthesize",
     }
     if request.path.startswith(API_PREFIX) and request.path not in allowed and not request.path.startswith(f"{API_PREFIX}/providers/"):
         return jsonify({"error": "Disabled in minimal Jarvis mode"}), 404
@@ -114,10 +127,7 @@ async def chat():
                 for event in agent.run(user_input):
                     loop.call_soon_threadsafe(queue.put_nowait, event)
             except Exception as exc:
-                loop.call_soon_threadsafe(
-                    queue.put_nowait,
-                    {"type": "done", "content": f"Error: {exc}", "final": True},
-                )
+                loop.call_soon_threadsafe(queue.put_nowait, {"type": "done", "content": f"Error: {exc}", "final": True})
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
@@ -165,15 +175,7 @@ async def autopilot():
             try:
                 if is_self_coding_goal(goal):
                     if not workspace:
-                        events = iter(
-                            [
-                                {
-                                    "type": "error",
-                                    "content": "Self-coding requires an explicit workspace path.",
-                                    "final": True,
-                                }
-                            ]
-                        )
+                        events = iter([{"type": "error", "content": "Self-coding requires an explicit workspace path.", "final": True}])
                     else:
                         events = run_coding_agent(workspace, goal)
                 else:
@@ -181,10 +183,7 @@ async def autopilot():
                 for event in events:
                     loop.call_soon_threadsafe(queue.put_nowait, event)
             except Exception as exc:
-                loop.call_soon_threadsafe(
-                    queue.put_nowait,
-                    {"type": "done", "content": f"Self-coding error: {exc}", "final": True},
-                )
+                loop.call_soon_threadsafe(queue.put_nowait, {"type": "done", "content": f"Self-coding error: {exc}", "final": True})
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
@@ -242,13 +241,7 @@ async def remove_provider(provider: str):
 @app.route(f"{API_PREFIX}/providers/test", methods=["POST"])
 @require_auth
 async def test_providers():
-    """Verify that saved credentials are visible to Jarvis's provider layer.
-
-    This deliberately does not print or return secrets. It constructs each
-    configured provider, while actual network/API validation remains opt-in.
-    """
     from providers import get_provider
-
     results = []
     for status in public_status():
         provider = status["id"]
@@ -263,21 +256,71 @@ async def test_providers():
     return jsonify({"providers": results})
 
 
+@app.route(f"{API_PREFIX}/voice/status")
+@require_auth
+async def voice_status():
+    return jsonify({
+        "provider": "elevenlabs",
+        "configured": bool(os.environ.get("ELEVENLABS_API_KEY", "").strip() or get_key("elevenlabs")),
+        "voice_id_configured": bool(_tts_voice_id()),
+        "model_id": _tts_model_id(),
+        "fallback": "browser-speech-synthesis",
+    })
+
+
+@app.route(f"{API_PREFIX}/voice/synthesize", methods=["POST"])
+@require_auth
+async def voice_synthesize():
+    data = await request.get_json() or {}
+    text = data.get("text", "")
+    if not isinstance(text, str) or not text.strip():
+        return jsonify({"error": "text is required"}), 422
+    text = text.strip()
+    if len(text) > _MAX_TTS_LENGTH:
+        return jsonify({"error": f"text exceeds {_MAX_TTS_LENGTH} characters"}), 422
+
+    api_key = os.environ.get("ELEVENLABS_API_KEY", "").strip() or get_key("elevenlabs")
+    if not api_key:
+        return jsonify({"error": "ElevenLabs is not configured"}), 503
+
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    payload = json.dumps({
+        "text": text,
+        "model_id": _tts_model_id(),
+        "voice_settings": {
+            "stability": 0.55,
+            "similarity_boost": 0.80,
+            "style": 0.0,
+            "use_speaker_boost": True,
+            "speed": 0.96,
+        },
+    }).encode("utf-8")
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{urllib.parse.quote(_tts_voice_id(), safe='')}?output_format=mp3_44100_128"
+    req = urllib.request.Request(url, data=payload, method="POST", headers={"xi-api-key": api_key, "Content-Type": "application/json", "Accept": "audio/mpeg"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as upstream:
+            audio = upstream.read()
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            detail = "ElevenLabs request failed"
+        return jsonify({"error": detail[:500]}), 502
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return jsonify({"error": f"ElevenLabs request failed: {exc}"}), 502
+
+    response = Response(audio, mimetype="audio/mpeg")
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.route(f"{API_PREFIX}/health")
 async def health():
     from agent.openhands_runtime import openhands_available
-    return jsonify(
-        {
-            "status": "ok",
-            "mode": "minimal",
-            "features": ["conversation", "self_coding", "provider_settings", "openhands", "emrg_evolution"],
-            "engines": {
-                "openhands": openhands_available(),
-                "opencode": True,
-            },
-            "name": "Jarvis",
-        }
-    )
+    return jsonify({"status": "ok", "mode": "minimal", "features": ["conversation", "self_coding", "provider_settings", "voice", "openhands", "emrg_evolution"], "engines": {"openhands": openhands_available(), "opencode": True}, "name": "Jarvis"})
 
 
 if __name__ == "__main__":
