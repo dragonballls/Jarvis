@@ -14,8 +14,8 @@ from quart import Quart, jsonify, make_response, request
 from quart_cors import cors
 
 from agent.core import Agent
+from agent.evolution import run_evolution_cycle
 from agent.self_coding_runtime import is_self_coding_goal
-from core.opencode_agent import run_coding_agent
 
 API_PREFIX = "/api/v1"
 MINIMAL_MODE = True
@@ -167,7 +167,7 @@ async def autopilot():
                             ]
                         )
                     else:
-                        events = run_coding_agent(Path(workspace), goal)
+                        events = run_evolution_cycle(Path(workspace), goal)
                 else:
                     events = agent.run_autopilot(goal, workspace)
                 for event in events:
@@ -183,7 +183,7 @@ async def autopilot():
         executor.submit(run_agent)
         try:
             while True:
-                event = await asyncio.wait_for(queue.get(), timeout=600)
+                event = await asyncio.wait_for(queue.get(), timeout=1200)
                 if event is None:
                     break
                 yield json.dumps(event, ensure_ascii=False) + "\n"
@@ -200,7 +200,19 @@ async def autopilot():
 
 @app.route(f"{API_PREFIX}/health")
 async def health():
-    return jsonify({"status": "ok", "mode": "minimal", "features": ["conversation", "self_coding"], "name": "Jarvis"})
+    from agent.openhands_runtime import openhands_available
+    return jsonify(
+        {
+            "status": "ok",
+            "mode": "minimal",
+            "features": ["conversation", "self_coding", "openhands", "emrg_evolution"],
+            "engines": {
+                "openhands": openhands_available(),
+                "opencode": True,
+            },
+            "name": "Jarvis",
+        }
+    )
 
 
 if __name__ == "__main__":
