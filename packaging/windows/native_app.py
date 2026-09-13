@@ -12,8 +12,19 @@ from tkinter import font as tkfont
 from urllib.request import Request, urlopen
 
 from core.opencode_agent import run_coding_agent
+from packaging.windows.app import (
+    API_HOST,
+    API_PORT,
+    _auto_update_loop,
+    install_startup,
+    log,
+    prepare_self_coding_workspace,
+    run_api_server_thread,
+    wait_for_port,
+)
 
 _MUTEX_HANDLE = None
+
 
 def _acquire_single_instance() -> bool:
     global _MUTEX_HANDLE
@@ -28,17 +39,6 @@ def _acquire_single_instance() -> bool:
         return False
     _MUTEX_HANDLE = handle
     return True
-
-from packaging.windows.app import (
-    API_HOST,
-    API_PORT,
-    _auto_update_loop,
-    install_startup,
-    log,
-    prepare_self_coding_workspace,
-    run_api_server_thread,
-    wait_for_port,
-)
 
 
 def _post_autopilot(goal: str, workspace: Path | None) -> None:
