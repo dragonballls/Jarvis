@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import ctypes
+import importlib.util
 import json
 import os
+import sys
 import traceback
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -41,11 +43,28 @@ def _bootstrap_log(message: str) -> None:
             continue
 
 
+def _runtime_app_path() -> Path:
+    """Return the bundled/runtime copy of packaging/windows/app.py."""
+    if getattr(sys, "frozen", False):
+        root = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+        return root / "packaging" / "windows" / "app.py"
+    return Path(__file__).resolve().with_name("app.py")
+
+
 def _load_runtime() -> None:
     global API_HOST, API_PORT, _auto_update_loop, install_startup, log
     global prepare_self_coding_workspace, run_api_server_thread, wait_for_port
-    _bootstrap_log("Jarvis runtime bootstrap: loading packaging.windows.app")
-    from packaging.windows import app as runtime
+    runtime_path = _runtime_app_path()
+    _bootstrap_log(f"Jarvis runtime bootstrap: loading {runtime_path}")
+    if not runtime_path.is_file():
+        raise RuntimeError(f"Bundled Jarvis runtime module is missing: {runtime_path}")
+
+    spec = importlib.util.spec_from_file_location("jarvis_packaged_runtime", runtime_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to create a loader for {runtime_path}")
+    runtime = importlib.util.module_from_spec(spec)
+    sys.modules["jarvis_packaged_runtime"] = runtime
+    spec.loader.exec_module(runtime)
 
     API_HOST = runtime.API_HOST
     API_PORT = runtime.API_PORT
@@ -55,7 +74,7 @@ def _load_runtime() -> None:
     prepare_self_coding_workspace = runtime.prepare_self_coding_workspace
     run_api_server_thread = runtime.run_api_server_thread
     wait_for_port = runtime.wait_for_port
-    _bootstrap_log("Jarvis runtime bootstrap: packaging.windows.app loaded")
+    _bootstrap_log("Jarvis runtime bootstrap: packaging/windows/app.py loaded")
 
 
 _MUTEX_HANDLE = None
@@ -248,7 +267,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     try:
-        import sys
         if "--smoke-test" in sys.argv:
             _bootstrap_log("Jarvis smoke-test bootstrap starting")
         main()
