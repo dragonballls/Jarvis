@@ -12,6 +12,7 @@ pyautogui>=0.9.54
 
 # Agent engines
 openhands-sdk==1.47.0
+openhands-tools==1.47.0
 emrg @ git+https://github.com/dragonballls/emrg.git@master
 
 # Development
