@@ -15,6 +15,7 @@ on:
       - "plugins/**"
       - "scripts/**"
       - "requirements.txt"
+      - "self_coding/**"
       - "packaging/windows/**"
       - ".github/workflows/windows-app.yml"
 
@@ -89,8 +90,8 @@ jobs:
       - name: Verify smoke-test log
         shell: pwsh
         run: |
-          if (-not (Test-Path build/windows/smoke_test.log)) { throw "Smoke-test log was not produced" }
-          $log = Get-Content build/windows/smoke_test.log -Raw
+          if (-not (Test-Path build/windows/jarvis.log)) { throw "Packaged Jarvis log was not produced" }
+          $log = Get-Content build/windows/jarvis.log -Raw
           if ($log -notmatch "Jarvis smoke test passed") { throw "Packaged smoke test did not report success" }
 
       - name: Upload single-file Windows app
