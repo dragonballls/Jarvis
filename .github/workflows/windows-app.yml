@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - openhands-only-fallback
     paths:
       - "desktop/**"
       - "core/**"
