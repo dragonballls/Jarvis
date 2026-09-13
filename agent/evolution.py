@@ -30,8 +30,8 @@ def _worktree_clean(workspace: Path) -> bool:
 
 def _verification_commands(workspace: Path) -> list[list[str]]:
     commands: list[list[str]] = []
-    if (workspace / "pyproject.toml").exists() or (workspace / "pytest.ini").exists():
-        commands.append(["python", "-m", "pytest", "-q"])
+    if (workspace / "pyproject.toml").exists() or (workspace / "pytest.ini").exists() or (workspace / "requirements.txt").exists():
+        commands.append(["python", "-m", "pytest", "-q", "tests"])
     if (workspace / "package.json").exists():
         commands.append(["npm", "test", "--", "--runInBand"])
     return commands
@@ -43,7 +43,17 @@ def _verify(workspace: Path) -> Generator[dict, None, bool]:
         yield {"type": "autopilot", "event": "verification_failed", "check": "git diff --check", "output": output}
         return False
 
-    for command in _verification_commands(workspace):
+    commands = _verification_commands(workspace)
+    if not commands:
+        yield {
+            "type": "autopilot",
+            "event": "verification_failed",
+            "check": "verification configuration",
+            "output": "No supported project verification command was found.",
+        }
+        return False
+
+    for command in commands:
         try:
             result = subprocess.run(
                 command,
