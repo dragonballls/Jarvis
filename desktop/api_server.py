@@ -23,8 +23,6 @@ MINIMAL_MODE = True
 _API_SECRET = os.environ.get("API_SECRET", "")
 _MAX_MESSAGE_LENGTH = 10_000
 _MAX_TTS_LENGTH = 8_000
-# ElevenLabs' current replacement for the legacy George voice: Eldrin,
-# described by ElevenLabs as a crisp British baritone.
 _DEFAULT_TTS_VOICE_ID = "6WwXjDDEMyNmFG95zycZ"
 _DEFAULT_TTS_MODEL = "eleven_flash_v2_5"
 
@@ -71,14 +69,7 @@ def _tts_model_id() -> str:
 
 
 app = Quart(__name__)
-app = cors(
-    app,
-    allow_origin={"http://localhost:5173", "http://127.0.0.1:5173"},
-    allow_methods={"GET", "POST", "DELETE", "OPTIONS"},
-    allow_headers={"Content-Type", "X-API-Key"},
-    allow_credentials=True,
-)
-
+app = cors(app, allow_origin={"http://localhost:5173", "http://127.0.0.1:5173"}, allow_methods={"GET", "POST", "DELETE", "OPTIONS"}, allow_headers={"Content-Type", "X-API-Key"}, allow_credentials=True)
 _agents: dict[str, Agent] = {}
 
 
@@ -92,15 +83,7 @@ def get_agent(session_id: str = "default") -> Agent:
 async def reject_non_core_api():
     if request.method == "OPTIONS":
         return None
-    allowed = {
-        f"{API_PREFIX}/chat",
-        f"{API_PREFIX}/autopilot",
-        f"{API_PREFIX}/health",
-        f"{API_PREFIX}/providers",
-        f"{API_PREFIX}/providers/test",
-        f"{API_PREFIX}/voice/status",
-        f"{API_PREFIX}/voice/synthesize",
-    }
+    allowed = {f"{API_PREFIX}/chat", f"{API_PREFIX}/autopilot", f"{API_PREFIX}/health", f"{API_PREFIX}/providers", f"{API_PREFIX}/providers/test", f"{API_PREFIX}/voice/status", f"{API_PREFIX}/voice/synthesize"}
     if request.path.startswith(API_PREFIX) and request.path not in allowed and not request.path.startswith(f"{API_PREFIX}/providers/"):
         return jsonify({"error": "Disabled in minimal Jarvis mode"}), 404
     return None
@@ -241,8 +224,11 @@ async def test_providers():
             results.append({"provider": provider, "configured": False, "ready": False})
             continue
         try:
-            get_provider(str(provider))
-            results.append({"provider": provider, "configured": True, "ready": True})
+            if provider == "elevenlabs":
+                results.append({"provider": provider, "configured": True, "ready": True, "kind": "tts"})
+            else:
+                get_provider(str(provider))
+                results.append({"provider": provider, "configured": True, "ready": True})
         except Exception as exc:
             results.append({"provider": provider, "configured": True, "ready": False, "error": str(exc)})
     return jsonify({"providers": results})
@@ -251,14 +237,7 @@ async def test_providers():
 @app.route(f"{API_PREFIX}/voice/status")
 @require_auth
 async def voice_status():
-    return jsonify({
-        "provider": "elevenlabs",
-        "configured": bool(os.environ.get("ELEVENLABS_API_KEY", "").strip() or get_key("elevenlabs")),
-        "voice_id": _tts_voice_id(),
-        "voice_name": "Eldrin - Crisp British Baritone",
-        "model_id": _tts_model_id(),
-        "fallback": "browser-speech-synthesis",
-    })
+    return jsonify({"provider": "elevenlabs", "configured": bool(os.environ.get("ELEVENLABS_API_KEY", "").strip() or get_key("elevenlabs")), "voice_id": _tts_voice_id(), "voice_name": "Eldrin - Crisp British Baritone", "model_id": _tts_model_id(), "fallback": "browser-speech-synthesis"})
 
 
 @app.route(f"{API_PREFIX}/voice/synthesize", methods=["POST"])
@@ -278,17 +257,7 @@ async def voice_synthesize():
     import urllib.error
     import urllib.parse
     import urllib.request
-    payload = json.dumps({
-        "text": text,
-        "model_id": _tts_model_id(),
-        "voice_settings": {
-            "stability": 0.55,
-            "similarity_boost": 0.80,
-            "style": 0.0,
-            "use_speaker_boost": True,
-            "speed": 0.96,
-        },
-    }).encode("utf-8")
+    payload = json.dumps({"text": text, "model_id": _tts_model_id(), "voice_settings": {"stability": 0.55, "similarity_boost": 0.80, "style": 0.0, "use_speaker_boost": True, "speed": 0.96}}).encode("utf-8")
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{urllib.parse.quote(_tts_voice_id(), safe='')}?output_format=mp3_44100_128"
     req = urllib.request.Request(url, data=payload, method="POST", headers={"xi-api-key": api_key, "Content-Type": "application/json", "Accept": "audio/mpeg"})
     try:
@@ -302,7 +271,6 @@ async def voice_synthesize():
         return jsonify({"error": detail[:500]}), 502
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         return jsonify({"error": f"ElevenLabs request failed: {exc}"}), 502
-
     response = Response(audio, mimetype="audio/mpeg")
     response.headers["Cache-Control"] = "no-store"
     return response
