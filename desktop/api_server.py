@@ -51,6 +51,11 @@ def validate_workspace(path: str | None) -> str | None:
     return None
 
 
+def run_coding_agent(workspace: str | Path, goal: str):
+    """Backward-compatible self-coding entry point used by integrations/tests."""
+    return run_evolution_cycle(Path(workspace), goal)
+
+
 app = Quart(__name__)
 app = cors(
     app,
@@ -167,7 +172,7 @@ async def autopilot():
                             ]
                         )
                     else:
-                        events = run_evolution_cycle(Path(workspace), goal)
+                        events = run_coding_agent(workspace, goal)
                 else:
                     events = agent.run_autopilot(goal, workspace)
                 for event in events:
