@@ -57,13 +57,6 @@ export function useVoiceOutput(): UseVoiceOutputReturn {
     cloudSpeakingRef.current = false
   }, [])
 
-  const enqueueBrowserSpeech = useCallback((text: string, options?: SpeakOptions) => {
-    if (!synthRef.current) return false
-    speakQueueRef.current.push({ text, options })
-    processBrowserQueue()
-    return true
-  }, [])
-
   const processBrowserQueue = useCallback(() => {
     if (speakingRef.current || speakQueueRef.current.length === 0) return
     const synth = synthRef.current
@@ -91,11 +84,19 @@ export function useVoiceOutput(): UseVoiceOutputReturn {
     synth.speak(utterance)
   }, [])
 
+  const enqueueBrowserSpeech = useCallback((text: string, options?: SpeakOptions) => {
+    if (!synthRef.current) return false
+    speakQueueRef.current.push({ text, options })
+    processBrowserQueue()
+    return true
+  }, [processBrowserQueue])
+
   const speakWithCloudVoice = useCallback(async (text: string, options?: SpeakOptions) => {
     if (!cloudVoiceReady) return false
     cleanupAudio()
     try {
       const blob = await synthesizeVoice(text)
+      if (blob.size === 0) throw new Error('ElevenLabs returned empty audio')
       const url = URL.createObjectURL(blob)
       const audio = new Audio(url)
       audio.preload = 'auto'
