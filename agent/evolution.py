@@ -33,7 +33,7 @@ def _verification_commands(workspace: Path) -> list[list[str]]:
     if (workspace / "pyproject.toml").exists() or (workspace / "pytest.ini").exists() or (workspace / "requirements.txt").exists():
         commands.append(["python", "-m", "pytest", "-q", "tests"])
     if (workspace / "package.json").exists():
-        commands.append(["npm", "test", "--", "--runInBand"])
+        commands.append(["npm", "test"])
     return commands
 
 
