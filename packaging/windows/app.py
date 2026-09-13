@@ -36,6 +36,11 @@ def resource_root() -> Path:
 
 ROOT = resource_root()
 
+def _run_no_window(*args, **kwargs):
+    if os.name == "nt":
+        kwargs.setdefault("creationflags", getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    return _run_no_window(*args, **kwargs)
+
 
 def active_workspace() -> Path | None:
     configured = os.environ.get("JARVIS_WORKSPACE", "").strip()
@@ -86,7 +91,7 @@ def _git_clone_workspace(workspace: Path) -> bool:
     if not git:
         return False
     try:
-        subprocess.run(
+        _run_no_window(
             [git, "clone", "--depth", "1", "--branch", "main", REPO_URL, str(workspace)],
             cwd=workspace.parent,
             check=True,
@@ -106,7 +111,7 @@ def _initialize_archive_workspace(workspace: Path) -> None:
     git = shutil.which("git.exe") or shutil.which("git")
     if not git:
         raise RuntimeError("Git is required for Jarvis self-coding verification.")
-    result = subprocess.run([git, "init"], cwd=workspace, check=False, capture_output=True, text=True, timeout=30)
+    result = _run_no_window([git, "init"], cwd=workspace, check=False, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "git init failed")
     for args in (
@@ -115,7 +120,7 @@ def _initialize_archive_workspace(workspace: Path) -> None:
         [git, "add", "-A"],
         [git, "commit", "-m", "Jarvis bootstrap baseline"],
     ):
-        result = subprocess.run(args, cwd=workspace, check=False, capture_output=True, text=True, timeout=60)
+        result = _run_no_window(args, cwd=workspace, check=False, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "Git bootstrap command failed")
     log("Self-coding workspace initialized with a local Git baseline")
@@ -310,7 +315,7 @@ def install_startup() -> None:
 
 
 def _workspace_is_clean(workspace: Path, git: str) -> bool:
-    result = subprocess.run([git, "status", "--porcelain", "--untracked-files=all"], cwd=workspace, capture_output=True, text=True, timeout=15, check=False)
+    result = _run_no_window([git, "status", "--porcelain", "--untracked-files=all"], cwd=workspace, capture_output=True, text=True, timeout=15, check=False)
     return result.returncode == 0 and not result.stdout.strip()
 
 
@@ -338,12 +343,12 @@ def _auto_update_loop(workspace: Path) -> None:
             if not _workspace_is_clean(workspace, git):
                 log("Auto-update paused: self-coding workspace has local changes.")
                 continue
-            fetch = subprocess.run([git, "fetch", "origin", "main", "--prune"], cwd=workspace, capture_output=True, text=True, timeout=60, check=False)
+            fetch = _run_no_window([git, "fetch", "origin", "main", "--prune"], cwd=workspace, capture_output=True, text=True, timeout=60, check=False)
             if fetch.returncode != 0:
                 log("Auto-update fetch failed; retaining the current Jarvis version.")
                 continue
-            local = subprocess.run([git, "rev-parse", "HEAD"], cwd=workspace, capture_output=True, text=True, timeout=15, check=False).stdout.strip()
-            remote = subprocess.run([git, "rev-parse", "origin/main"], cwd=workspace, capture_output=True, text=True, timeout=15, check=False).stdout.strip()
+            local = _run_no_window([git, "rev-parse", "HEAD"], cwd=workspace, capture_output=True, text=True, timeout=15, check=False).stdout.strip()
+            remote = _run_no_window([git, "rev-parse", "origin/main"], cwd=workspace, capture_output=True, text=True, timeout=15, check=False).stdout.strip()
             if not local or not remote or local == remote:
                 continue
             log(f"Auto-update detected main change: {local[:12]} -> {remote[:12]}.")
@@ -357,7 +362,7 @@ def _auto_update_loop(workspace: Path) -> None:
                 if not updater_python:
                     log("Auto-update skipped: no external Python interpreter is available.")
                     continue
-            result = subprocess.run([updater_python, str(updater), "--build"], cwd=workspace, capture_output=True, text=True, timeout=900, check=False, env=os.environ.copy())
+            result = _run_no_window([updater_python, str(updater), "--build"], cwd=workspace, capture_output=True, text=True, timeout=900, check=False, env=os.environ.copy())
             if result.returncode == 0:
                 log("Jarvis source and frontend update completed; restarting onto the updated workspace.")
                 _restart_after_update()

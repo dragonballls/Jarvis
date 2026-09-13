@@ -81,6 +81,8 @@ class Autopilot:
         finished: set[str] = set()
         failed: set[str] = set()
         messages = list(context or [])
+        if not any(isinstance(m, dict) and m.get("role") == "user" for m in messages):
+            messages.append({"role": "user", "content": goal})
 
         while pending:
             ready = [t for t in pending if all(dep in finished for dep in (t.dependencies or []))]

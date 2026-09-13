@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import queue
@@ -9,6 +10,22 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import font as tkfont
 from urllib.request import Request, urlopen
+
+_MUTEX_HANDLE = None
+
+def _acquire_single_instance() -> bool:
+    global _MUTEX_HANDLE
+    if os.name != "nt":
+        return True
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.CreateMutexW(None, False, "Local\\Jarvis.Native.SingleInstance")
+    if not handle:
+        return True
+    if kernel32.GetLastError() == 183:
+        kernel32.CloseHandle(handle)
+        return False
+    _MUTEX_HANDLE = handle
+    return True
 
 from packaging.windows.app import (
     API_HOST,
@@ -152,6 +169,8 @@ def run_native_ui(workspace: Path) -> None:
 
 
 def main() -> None:
+    if not _acquire_single_instance():
+        return
     workspace = prepare_self_coding_workspace()
     os.environ["JARVIS_WORKSPACE"] = str(workspace)
     install_startup()
