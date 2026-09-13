@@ -9,9 +9,7 @@ BUILD = ROOT / "build" / "windows"
 DIST = ROOT / "desktop" / "dist"
 ENTRY = ROOT / "packaging" / "windows" / "native_app.py"
 
-# Jarvis is a cloud-first assistant. These optional local-ML stacks are not
-# required by the packaged chat/self-coding runtime and can make PyInstaller
-# consume several GB of RAM while analyzing the dependency graph.
+# Jarvis is cloud-first. Optional local-ML stacks are intentionally excluded.
 OPTIONAL_LOCAL_ML = (
     "sentence_transformers", "sentence_transformers.*", "torch", "torch.*",
     "transformers", "transformers.*", "scipy", "scipy.*", "pandas", "pandas.*",
@@ -48,13 +46,11 @@ def jarvis_pyinstaller_args(name: str, windowed: bool, onefile: bool, distpath: 
         "--collect-submodules", "providers",
         "--collect-submodules", "openhands.sdk",
         "--collect-submodules", "openhands.tools",
-        "--collect-submodules", "emrg",
         "--hidden-import", "openhands.sdk",
         "--hidden-import", "openhands.tools",
         "--hidden-import", "openhands.tools.file_editor",
         "--hidden-import", "openhands.tools.task_tracker",
         "--hidden-import", "openhands.tools.terminal",
-        "--hidden-import", "emrg",
         "--hidden-import", "desktop.api_server",
         "--hidden-import", "desktop",
         "--hidden-import", "tkinter",
