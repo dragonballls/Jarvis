@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "jarvis-bootstrap": {
+      "description": "Jarvis remote-AI bootstrap and safe self-coding agent",
+      "mode": "primary",
+      "prompt": "{file:.opencode/agents/jarvis-bootstrap.md}"
+    }
+  }
+}

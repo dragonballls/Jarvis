@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - pivot/drift-jarvis-build
     paths:
       - "desktop/**"
       - "core/**"

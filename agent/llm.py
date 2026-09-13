@@ -45,8 +45,6 @@ def _is_retryable_provider_error(event: dict) -> bool:
         "502",
         "503",
         "504",
-        "invalid api key",
-        "missing authentication header",
     )
 
     return any(marker in text for marker in retryable_markers)
@@ -145,7 +143,7 @@ def chat(
                 return
             yield {
                 "type": "tokens",
-                "content": f"[{provider_name} unavailable; switching to {fallback_name}â€¦]\n\n",
+                "content": f"[{provider_name} unavailable; switching to {fallback_name}…]\n\n",
             }
             try:
                 yield from fallback.chat(messages, tools=tools)
@@ -162,7 +160,7 @@ def chat(
                 return
             yield {
                 "type": "tokens",
-                "content": f"[{provider_name} unavailable; switching to {fallback_name}â€¦]\n\n",
+                "content": f"[{provider_name} unavailable; switching to {fallback_name}…]\n\n",
             }
             try:
                 yield from fallback.chat(messages, tools=tools)
@@ -203,7 +201,7 @@ def chat(
 
     yield {
         "type": "tokens",
-        "content": (f"[{selected_name} unavailable; switching to {fallback_name}â€¦]\n\n"),
+        "content": f"[{selected_name} unavailable; switching to {fallback_name}…]\n\n",
     }
 
     try:

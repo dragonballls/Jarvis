@@ -1,0 +1,48 @@
+name: Jarvis Drift Base
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'JARVIS_DRIFT_BOOTSTRAP.md'
+      - 'opencode.json'
+      - '.opencode/**'
+      - 'scripts/jarvis_provider_bootstrap.py'
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download latest Drift release
+        shell: pwsh
+        run: |
+          $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/kylepelham/Drift/releases/latest'
+          $asset = $release.assets | Where-Object { $_.name -match 'x64-setup\.exe$' } | Select-Object -First 1
+          if (-not $asset) { throw 'No Drift Windows x64 installer found.' }
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile 'Jarvis-Setup.exe'
+          $actual = (Get-FileHash 'Jarvis-Setup.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expected = ($asset.digest -replace '^sha256:', '').ToLowerInvariant()
+          if ($actual -ne $expected) { throw "Drift checksum mismatch. expected=$expected actual=$actual" }
+          "DRIFT_VERSION=$($release.tag_name)" | Out-File drift-version.txt -Encoding utf8
+
+      - name: Create Jarvis bootstrap bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path bundle\workspace\.opencode\agents | Out-Null
+          New-Item -ItemType Directory -Force -Path bundle\workspace\scripts | Out-Null
+          Copy-Item 'JARVIS_DRIFT_BOOTSTRAP.md' 'bundle\workspace\'
+          Copy-Item 'opencode.json' 'bundle\workspace\'
+          Copy-Item '.opencode\agents\jarvis-bootstrap.md' 'bundle\workspace\.opencode\agents\'
+          Copy-Item 'scripts\jarvis_provider_bootstrap.py' 'bundle\workspace\scripts\'
+          Copy-Item 'Jarvis-Setup.exe' 'bundle\'
+          Copy-Item 'drift-version.txt' 'bundle\'
+          Compress-Archive -Path 'bundle\*' -DestinationPath 'Jarvis-Drift-Windows.zip' -Force
+
+      - name: Publish artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Jarvis-Drift-Windows
+          path: Jarvis-Drift-Windows.zip
