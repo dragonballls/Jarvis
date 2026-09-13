@@ -13,8 +13,9 @@ def test_available_reports_capabilities():
     assert "window_management" in info
 
 
-def test_open_app_missing_binary_returns_error():
+def test_open_app_missing_binary_returns_error(monkeypatch):
     cc = ComputerControl()
+    monkeypatch.setattr(os, "startfile", lambda path: (_ for _ in ()).throw(OSError("missing app")), raising=False)
     result = cc.open_app("__definitely_not_a_real_app_xyz__")
     assert "success" in result
 

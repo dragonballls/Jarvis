@@ -314,6 +314,7 @@ def smoke_test() -> None:
         if status != 200:
             raise RuntimeError(f"Jarvis API health endpoint returned HTTP {status}: {body}")
         log("smoke-test API health passed")
+        log("Jarvis smoke test passed")
     finally:
         ui_server.shutdown()
         ui_server.server_close()
