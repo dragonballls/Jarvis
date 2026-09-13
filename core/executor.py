@@ -23,7 +23,16 @@ class Executor:
         max_iterations: int = 10,
     ) -> Generator[dict, None, None]:
         task.status = "running"
-        yield from self._react_loop(messages, tool_definitions, max_iterations, task)
+        task_messages = list(messages)
+        task_instruction = str(getattr(task, "description", "")).strip()
+        task_args = getattr(task, "args", {})
+        if task_args:
+            task_instruction += "\n\nRequired tool arguments:\n" + json.dumps(task_args, ensure_ascii=False)
+        if task_instruction:
+            task_messages.append({"role": "user", "content": task_instruction})
+        elif not any(isinstance(m, dict) and m.get("role") == "user" for m in task_messages):
+            task_messages.append({"role": "user", "content": "Execute this task now."})
+        yield from self._react_loop(task_messages, tool_definitions, max_iterations, task)
 
     def _react_loop(
         self,
