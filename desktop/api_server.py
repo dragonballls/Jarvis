@@ -23,7 +23,9 @@ MINIMAL_MODE = True
 _API_SECRET = os.environ.get("API_SECRET", "")
 _MAX_MESSAGE_LENGTH = 10_000
 _MAX_TTS_LENGTH = 8_000
-_DEFAULT_TTS_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"
+# ElevenLabs' current replacement for the legacy George voice: Eldrin,
+# described by ElevenLabs as a crisp British baritone.
+_DEFAULT_TTS_VOICE_ID = "6WwXjDDEMyNmFG95zycZ"
 _DEFAULT_TTS_MODEL = "eleven_flash_v2_5"
 
 
@@ -111,7 +113,6 @@ async def chat():
     err = validate_chat_input(data)
     if err:
         return jsonify({"error": err}), 422
-
     user_input = data["message"]
     session_id = str(data.get("session_id", "default"))
     agent = get_agent(session_id)
@@ -121,7 +122,6 @@ async def chat():
         queue: asyncio.Queue = asyncio.Queue()
         import concurrent.futures
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-
         def run_agent():
             try:
                 for event in agent.run(user_input):
@@ -130,7 +130,6 @@ async def chat():
                 loop.call_soon_threadsafe(queue.put_nowait, {"type": "done", "content": f"Error: {exc}", "final": True})
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)
-
         executor.submit(run_agent)
         try:
             while True:
@@ -140,7 +139,6 @@ async def chat():
                 yield json.dumps(event, ensure_ascii=False) + "\n"
         finally:
             executor.shutdown(wait=False)
-
     response = await make_response(generate())
     response.headers["Content-Type"] = "text/event-stream; charset=utf-8"
     response.headers["Cache-Control"] = "no-cache"
@@ -156,12 +154,10 @@ async def autopilot():
     goal = str(data.get("goal", "")).strip()
     if not goal:
         return jsonify({"error": "goal is required"}), 422
-
     workspace = data.get("workspace") or os.getenv("JARVIS_WORKSPACE") or os.getenv("FRIDAY_WORKSPACE")
     workspace_error = validate_workspace(workspace)
     if workspace_error:
         return jsonify({"error": workspace_error}), 422
-
     session_id = str(data.get("session_id", "default"))
     agent = get_agent(session_id)
 
@@ -170,7 +166,6 @@ async def autopilot():
         queue: asyncio.Queue = asyncio.Queue()
         import concurrent.futures
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-
         def run_agent():
             try:
                 if is_self_coding_goal(goal):
@@ -186,7 +181,6 @@ async def autopilot():
                 loop.call_soon_threadsafe(queue.put_nowait, {"type": "done", "content": f"Self-coding error: {exc}", "final": True})
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)
-
         executor.submit(run_agent)
         try:
             while True:
@@ -196,7 +190,6 @@ async def autopilot():
                 yield json.dumps(event, ensure_ascii=False) + "\n"
         finally:
             executor.shutdown(wait=False)
-
     response = await make_response(generate())
     response.headers["Content-Type"] = "text/event-stream; charset=utf-8"
     response.headers["Cache-Control"] = "no-cache"
@@ -210,7 +203,6 @@ async def autopilot():
 async def providers():
     if request.method == "GET":
         return jsonify({"providers": public_status()})
-
     data = await request.get_json() or {}
     provider = str(data.get("provider", "")).strip()
     api_key = str(data.get("api_key", "")).strip()
@@ -262,7 +254,8 @@ async def voice_status():
     return jsonify({
         "provider": "elevenlabs",
         "configured": bool(os.environ.get("ELEVENLABS_API_KEY", "").strip() or get_key("elevenlabs")),
-        "voice_id_configured": bool(_tts_voice_id()),
+        "voice_id": _tts_voice_id(),
+        "voice_name": "Eldrin - Crisp British Baritone",
         "model_id": _tts_model_id(),
         "fallback": "browser-speech-synthesis",
     })
@@ -278,7 +271,6 @@ async def voice_synthesize():
     text = text.strip()
     if len(text) > _MAX_TTS_LENGTH:
         return jsonify({"error": f"text exceeds {_MAX_TTS_LENGTH} characters"}), 422
-
     api_key = os.environ.get("ELEVENLABS_API_KEY", "").strip() or get_key("elevenlabs")
     if not api_key:
         return jsonify({"error": "ElevenLabs is not configured"}), 503
@@ -286,7 +278,6 @@ async def voice_synthesize():
     import urllib.error
     import urllib.parse
     import urllib.request
-
     payload = json.dumps({
         "text": text,
         "model_id": _tts_model_id(),
