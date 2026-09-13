@@ -18,7 +18,8 @@ def test_provider_storage_round_trip_without_exposing_plaintext(monkeypatch, tmp
             provider_credentials.save_key("openai", "test-secret")
 
 
-def test_provider_api_contract(monkeypatch):
+@pytest.mark.asyncio
+async def test_provider_api_contract(monkeypatch):
     saved = {}
 
     def fake_save(provider, api_key):
@@ -39,5 +40,24 @@ def test_provider_api_contract(monkeypatch):
 
     client = api_server.app.test_client()
 
-    response = pytest.run(async_fn=client.get("/api/v1/providers")) if False else None
-    assert response is None
+    response = await client.get("/api/v1/providers")
+    assert response.status_code == 200
+    assert (await response.get_json())["providers"][0]["configured"] is False
+
+    response = await client.post(
+        "/api/v1/providers",
+        json={"provider": "openai", "api_key": "test-secret"},
+    )
+    assert response.status_code == 200
+    assert saved["openai"] == "test-secret"
+    assert "test-secret" not in await response.get_data(as_text=True)
+
+    response = await client.get("/api/v1/providers")
+    payload = await response.get_json()
+    openai = next(item for item in payload["providers"] if item["id"] == "openai")
+    assert openai["configured"] is True
+    assert "api_key" not in openai
+
+    response = await client.delete("/api/v1/providers/openai")
+    assert response.status_code == 200
+    assert "openai" not in saved
