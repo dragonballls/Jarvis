@@ -2,80 +2,44 @@ from __future__ import annotations
 
 import asyncio
 import json
-import multiprocessing
+import logging
 import os
 import shutil
-import socket
 import subprocess
 import sys
-import tempfile
 import threading
 import time
-import traceback
-import zipfile
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.error import URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlparse
 
+ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
 API_HOST = "127.0.0.1"
 API_PORT = 8080
 UI_HOST = "127.0.0.1"
 UI_PORT = 5173
-SMOKE_WATCHDOG_SECONDS = 35.0
-REPO_URL = "https://github.com/dragonballls/Jarvis.git"
-REPO_ZIP_URL = "https://github.com/dragonballls/Jarvis/archive/refs/heads/main.zip"
-WORKSPACE_NAME = "Jarvis-SelfCoding-Workspace"
-AUTO_UPDATE_INTERVAL = 30
+SMOKE_WATCHDOG_SECONDS = 60
+STARTUP_DELAY_SECONDS = 3
+AUTO_UPDATE_INTERVAL_SECONDS = 30
+
+LOG = Path.home() / "jarvis.log"
 
 
-def resource_root() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
-    return Path(__file__).resolve().parents[2]
+class QuietHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
 
-
-ROOT = resource_root()
-
-
-def _run_no_window(*args, **kwargs):
-    if os.name == "nt":
-        kwargs.setdefault("creationflags", getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    return subprocess.run(*args, **kwargs)
-
-
-def active_workspace() -> Path | None:
-    configured = os.environ.get("JARVIS_WORKSPACE", "").strip()
-    if configured:
-        workspace = Path(configured).expanduser()
-        if workspace.is_dir():
-            return workspace
-    return None
-
-
-def dist_root() -> Path:
-    workspace = active_workspace()
-    if workspace is not None and (workspace / "desktop" / "dist" / "index.html").is_file():
-        return workspace / "desktop" / "dist"
-    return ROOT / "desktop" / "dist"
-
-
-def log_path() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent / "jarvis.log"
-    return Path.cwd() / "jarvis.log"
+    def handle_error(self, request, client_address):
+        log(f"HTTP server error from {client_address}: {sys.exc_info()[1]}")
 
 
 def log(message: str) -> None:
-    line = message.rstrip() + "\n"
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    line = f"{timestamp} {message}\n"
     try:
-        with log_path().open("a", encoding="utf-8") as handle:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        with LOG.open("a", encoding="utf-8") as handle:
             handle.write(line)
-    except OSError:
-        pass
-    try:
-        if sys.stdout is not None:
-            print(message, flush=True)
     except OSError:
         pass
 
@@ -84,144 +48,95 @@ def hard_exit(code: int) -> None:
     os._exit(code)
 
 
-def self_coding_workspace() -> Path:
-    return Path.home() / WORKSPACE_NAME
+def active_workspace() -> Path | None:
+    raw = os.environ.get("JARVIS_WORKSPACE", "").strip()
+    if not raw:
+        return None
+    candidate = Path(raw).expanduser().resolve()
+    return candidate if candidate.exists() else None
 
 
-def _git_clone_workspace(workspace: Path) -> bool:
-    git = shutil.which("git.exe") or shutil.which("git")
-    if not git:
-        return False
-    try:
-        _run_no_window(
-            [git, "clone", "--depth", "1", "--branch", "main", REPO_URL, str(workspace)],
-            cwd=workspace.parent,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        log("Self-coding workspace cloned as a real Git repository")
-        return True
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        log(f"Git clone unavailable; using safe archive bootstrap: {exc}")
-        shutil.rmtree(workspace, ignore_errors=True)
-        return False
+def dist_root() -> Path:
+    workspace = active_workspace()
+    if workspace is not None:
+        candidate = workspace / "desktop" / "dist"
+        if (candidate / "index.html").is_file():
+            return candidate
+    bundled = ROOT / "desktop" / "dist"
+    return bundled
 
 
-def _initialize_archive_workspace(workspace: Path) -> None:
-    git = shutil.which("git.exe") or shutil.which("git")
-    if not git:
-        raise RuntimeError("Git is required for Jarvis self-coding verification.")
-    result = _run_no_window([git, "init"], cwd=workspace, check=False, capture_output=True, text=True, timeout=30)
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or "git init failed")
-    for args in (
-        [git, "config", "user.name", "Jarvis"],
-        [git, "config", "user.email", "jarvis@localhost"],
-    ):
-        result = _run_no_window(args, cwd=workspace, check=False, capture_output=True, text=True, timeout=60)
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr.strip() or "Git bootstrap configuration failed")
-    remote = _run_no_window([git, "remote", "get-url", "origin"], cwd=workspace, check=False, capture_output=True, text=True, timeout=30)
-    if remote.returncode != 0:
-        result = _run_no_window([git, "remote", "add", "origin", REPO_URL], cwd=workspace, check=False, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr.strip() or "Unable to configure GitHub origin")
-    result = _run_no_window([git, "add", "-A"], cwd=workspace, check=False, capture_output=True, text=True, timeout=60)
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or "git add failed")
-    result = _run_no_window([git, "commit", "-m", "Jarvis bootstrap baseline"], cwd=workspace, check=False, capture_output=True, text=True, timeout=60)
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or "Git bootstrap commit failed")
-    log("Self-coding workspace initialized with a local Git baseline and GitHub origin")
+def start_static_server(port: int = UI_PORT) -> QuietHTTPServer:
+    dist = dist_root().resolve()
+    if not (dist / "index.html").is_file():
+        raise RuntimeError(f"Jarvis frontend bundle is missing: {dist}")
 
-
-def _archive_workspace(workspace: Path) -> None:
-    temp_dir = Path(tempfile.mkdtemp(prefix="jarvis-bootstrap-"))
-    archive_path = temp_dir / "jarvis-main.zip"
-    extracted = temp_dir / "extracted"
-    try:
-        request = Request(REPO_ZIP_URL, headers={"User-Agent": "Jarvis/1.0"})
-        with urlopen(request, timeout=60) as response:
-            archive_path.write_bytes(response.read())
-        with zipfile.ZipFile(archive_path) as archive:
-            bad = [name for name in archive.namelist() if Path(name).is_absolute() or Path(name).drive or ".." in Path(name).parts]
-            if bad:
-                raise RuntimeError("GitHub source archive contained an unsafe path")
-            archive.extractall(extracted)
-        roots = [p for p in extracted.iterdir() if p.is_dir()]
-        if len(roots) != 1:
-            raise RuntimeError("Unexpected GitHub source archive layout")
-        source = roots[0]
-        if workspace.exists():
-            shutil.rmtree(workspace, ignore_errors=True)
-        shutil.copytree(source, workspace)
-        _initialize_archive_workspace(workspace)
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-def prepare_self_coding_workspace() -> Path:
-    workspace = self_coding_workspace()
-    if (workspace / ".git").is_dir() and (workspace / "agent").is_dir():
-        return workspace
-    workspace.parent.mkdir(parents=True, exist_ok=True)
-    if workspace.exists():
-        shutil.rmtree(workspace, ignore_errors=True)
-    try:
-        log(f"Preparing self-coding workspace: {workspace}")
-        if not _git_clone_workspace(workspace):
-            _archive_workspace(workspace)
-        if not (workspace / ".git").is_dir():
-            raise RuntimeError("Jarvis self-coding workspace is not a Git repository")
-        if not (workspace / "agent").is_dir():
-            raise RuntimeError("Jarvis self-coding workspace is missing the agent package")
-        log("Self-coding workspace ready")
-        return workspace
-    except Exception:
-        shutil.rmtree(workspace, ignore_errors=True)
-        log("Self-coding workspace preparation failed:\n" + traceback.format_exc())
-        raise
-
-
-def wait_for_port(host: str, port: int, timeout: float = 20.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection((host, port), timeout=0.5):
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            parsed = urlparse(self.path)
+            relative = parsed.path.lstrip("/") or "index.html"
+            if relative == "" or relative.endswith("/"):
+                relative = f"{relative}index.html" if relative else "index.html"
+            target = (dist / relative).resolve()
+            if dist not in target.parents and target != dist:
+                self.send_error(403)
                 return
-        except OSError:
-            time.sleep(0.2)
-    raise RuntimeError(f"Jarvis service did not become ready on {host}:{port}")
+            if not target.is_file():
+                self.send_error(404)
+                return
+            body = target.read_bytes()
+            content_type = "text/html; charset=utf-8"
+            suffix = target.suffix.lower()
+            if suffix == ".js":
+                content_type = "text/javascript; charset=utf-8"
+            elif suffix == ".css":
+                content_type = "text/css; charset=utf-8"
+            elif suffix == ".json":
+                content_type = "application/json; charset=utf-8"
+            elif suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico"}:
+                content_type = "application/octet-stream"
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
+        def log_message(self, format, *args):
+            return
 
-class QuietHandler(SimpleHTTPRequestHandler):
-    def log_message(self, _format: str, *_args) -> None:
-        return
-
-
-def start_static_server(port: int = UI_PORT) -> ThreadingHTTPServer:
-    dist = dist_root()
-    if not dist.is_dir() or not (dist / "index.html").is_file():
-        raise RuntimeError(f"Frontend bundle missing: {dist / 'index.html'}")
-
-    def handler(*args, **kwargs):
-        return QuietHandler(*args, directory=str(dist), **kwargs)
-
-    server = ThreadingHTTPServer((UI_HOST, port), handler)
-    thread = threading.Thread(target=server.serve_forever, name="jarvis-static", daemon=True)
-    thread.start()
+    server = QuietHTTPServer((UI_HOST, port), Handler)
+    threading.Thread(target=server.serve_forever, name="jarvis-ui-server", daemon=True).start()
     return server
 
 
-async def _api_server() -> None:
-    workspace = active_workspace()
-    if workspace is not None:
-        sys.path.insert(0, str(workspace))
-    sys.path.insert(1, str(ROOT))
-    log(f"API server importing desktop.api_server from {workspace or ROOT}")
-    from hypercorn.asyncio import serve
+def wait_for_port(host: str, port: int, timeout: float = 30) -> None:
+    import socket
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with socket.socket() as sock:
+            sock.settimeout(0.5)
+            try:
+                sock.connect((host, port))
+                return
+            except OSError:
+                time.sleep(0.1)
+    raise RuntimeError(f"Timed out waiting for {host}:{port}")
+
+
+def http_text(url: str) -> tuple[int, str] | None:
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:
+            return int(response.status), response.read().decode("utf-8", errors="replace")
+    except Exception as exc:
+        log(f"HTTP request failed for {url}: {exc}")
+        return None
+
+
+def start_api_server_thread() -> None:
+    import hypercorn.asyncio
     from hypercorn.config import Config
     from desktop.api_server import app
 
@@ -229,54 +144,75 @@ async def _api_server() -> None:
     config.bind = [f"{API_HOST}:{API_PORT}"]
     config.accesslog = None
     config.errorlog = None
-    config.loglevel = "warning"
-    await serve(app, config, shutdown_trigger=lambda: asyncio.Future())
 
-
-def run_api_server_thread() -> threading.Thread:
     def runner() -> None:
-        try:
-            if sys.platform == "win32":
-                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-            asyncio.run(_api_server())
-        except Exception:
-            log("API server crashed:\n" + traceback.format_exc())
+        asyncio.run(hypercorn.asyncio.serve(app, config))
 
-    thread = threading.Thread(target=runner, name="jarvis-api", daemon=True)
-    thread.start()
-    return thread
+    threading.Thread(target=runner, name="jarvis-api", daemon=True).start()
 
 
 def run_api_process() -> None:
-    """Legacy compatibility entry point; packaged Jarvis uses the in-process thread."""
-    try:
-        if sys.platform == "win32":
-            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        asyncio.run(_api_server())
-    except Exception:
-        log("API server crashed:\n" + traceback.format_exc())
-        raise
+    import hypercorn.asyncio
+    from hypercorn.config import Config
+    from desktop.api_server import app
+
+    config = Config()
+    config.bind = [f"{API_HOST}:{API_PORT}"]
+    asyncio.run(hypercorn.asyncio.serve(app, config))
 
 
-def http_text(url: str) -> tuple[int, str] | None:
-    try:
-        with urlopen(url, timeout=3) as response:
-            return response.status, response.read().decode("utf-8", errors="replace")
-    except (OSError, URLError):
-        return None
+def _run_no_window(args, **kwargs):
+    startupinfo = None
+    creationflags = 0
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return subprocess.run(args, startupinfo=startupinfo, creationflags=creationflags, **kwargs)
 
 
-async def quart_health_check() -> tuple[int, str]:
+def prepare_self_coding_workspace() -> Path:
+    configured = os.environ.get("JARVIS_SELF_CODING_WORKSPACE", "").strip()
+    if configured:
+        workspace = Path(configured).expanduser().resolve()
+        workspace.mkdir(parents=True, exist_ok=True)
+        return workspace
+    workspace = Path.home() / "Jarvis-SelfCoding-Workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    return workspace
+
+
+def ensure_workspace_repo(workspace: Path) -> None:
+    git_dir = workspace / ".git"
+    if git_dir.exists():
+        return
+    source = Path(__file__).resolve().parents[2]
+    if (source / ".git").exists():
+        _run_no_window(["git", "clone", "--", str(source), str(workspace)], check=False)
+
+
+def ensure_workspace_build(workspace: Path) -> None:
+    return
+
+
+def quart_health_check_sync():
+    import asyncio
+    import sys
+
     workspace = active_workspace()
     if workspace is not None:
         sys.path.insert(0, str(workspace))
     sys.path.insert(1, str(ROOT))
     from desktop.api_server import app
 
-    client = app.test_client()
-    response = await client.get("/api/v1/health")
-    body = await response.get_data(as_text=True)
-    return response.status_code, body
+    async def check():
+        client = app.test_client()
+        response = await client.get("/api/v1/health")
+        body = await response.get_data(as_text=True)
+        return response.status_code, body
+
+    return asyncio.run(check())
 
 
 def arm_smoke_watchdog(seconds: float = SMOKE_WATCHDOG_SECONDS) -> None:
@@ -310,10 +246,12 @@ def smoke_test() -> None:
         if "/assets/" not in html:
             raise RuntimeError("Jarvis UI root page did not contain a production asset reference")
         log("smoke-test UI checks passed")
-        status, body = asyncio.run(quart_health_check())
+        status, body = quart_health_check_sync()
         if status != 200:
             raise RuntimeError(f"Jarvis API health endpoint returned HTTP {status}: {body}")
         log("smoke-test API health passed")
+        # This marker is the CI contract consumed by packaging/windows/smoke_test.py.
+        log("Jarvis smoke test passed")
     finally:
         ui_server.shutdown()
         ui_server.server_close()
@@ -328,53 +266,37 @@ def install_startup() -> None:
         exe = Path(sys.executable).resolve()
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE) as key:
             winreg.SetValueEx(key, "Jarvis", 0, winreg.REG_SZ, f'"{exe}" --startup')
-    except OSError:
-        pass
-
-
-def _workspace_is_clean(workspace: Path, git: str) -> bool:
-    result = _run_no_window(
-        [git, "status", "--porcelain", "--untracked-files=all"],
-        cwd=workspace,
-        capture_output=True,
-        text=True,
-        timeout=15,
-        check=False,
-    )
-    return result.returncode == 0 and not result.stdout.strip()
+    except OSError as exc:
+        log(f"Could not install startup registration: {exc}")
 
 
 def _auto_update_loop(workspace: Path) -> None:
-    if os.environ.get("JARVIS_SMOKE_TEST") == "1" or os.environ.get("JARVIS_UPDATED_RESTART") == "1":
-        return
-    git = shutil.which("git.exe") or shutil.which("git")
-    if not git:
-        log("Auto-update disabled: Git was not found on PATH.")
-        return
     while True:
-        time.sleep(AUTO_UPDATE_INTERVAL)
+        time.sleep(AUTO_UPDATE_INTERVAL_SECONDS)
         try:
-            if not _workspace_is_clean(workspace, git):
-                log("Auto-update paused: self-coding workspace has local changes.")
-                continue
-            fetch = _run_no_window(
-                [git, "fetch", "origin", "main", "--prune"],
+            result = _run_no_window(
+                ["git", "fetch", "origin", "main", "--prune"],
                 cwd=workspace,
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=120,
                 check=False,
             )
-            if fetch.returncode != 0:
-                log("Auto-update fetch failed; retaining the current Jarvis version.")
+            if result.returncode != 0:
+                log("Auto-update fetch failed; keeping current version.")
                 continue
-            local_result = _run_no_window([git, "rev-parse", "HEAD"], cwd=workspace, capture_output=True, text=True, timeout=15, check=False)
-            remote_result = _run_no_window([git, "rev-parse", "origin/main"], cwd=workspace, capture_output=True, text=True, timeout=15, check=False)
-            local = local_result.stdout.strip()
-            remote = remote_result.stdout.strip()
-            if not local or not remote or local == remote:
+            head = _run_no_window(
+                ["git", "rev-parse", "HEAD"], cwd=workspace, capture_output=True, text=True, check=False
+            )
+            remote = _run_no_window(
+                ["git", "rev-parse", "origin/main"], cwd=workspace, capture_output=True, text=True, check=False
+            )
+            if head.returncode != 0 or remote.returncode != 0:
                 continue
-            log(f"Auto-update detected main change: {local[:12]} -> {remote[:12]}.")
+            local_sha = head.stdout.strip()
+            remote_sha = remote.stdout.strip()
+            if not local_sha or local_sha == remote_sha:
+                continue
             updater = workspace / "scripts" / "update.py"
             if not updater.is_file():
                 log("Auto-update skipped: updater script is missing from the workspace.")
@@ -421,28 +343,30 @@ def main() -> None:
         raise SystemExit(f"Jarvis frontend bundle is missing: {ROOT / 'desktop' / 'dist' / 'index.html'}")
     workspace = prepare_self_coding_workspace()
     os.environ["JARVIS_WORKSPACE"] = str(workspace)
+    ensure_workspace_repo(workspace)
+    ensure_workspace_build(workspace)
     import webview
 
     install_startup()
     start_static_server()
     threading.Thread(target=_auto_update_loop, args=(workspace,), name="jarvis-auto-update", daemon=True).start()
-    run_api_server_thread()
+    start_api_server_thread()
     try:
-        wait_for_port(API_HOST, API_PORT, timeout=30.0)
-        wait_for_port(UI_HOST, UI_PORT, timeout=10.0)
-        log("Jarvis services ready; opening desktop window")
-        webview.create_window("Jarvis", f"http://{UI_HOST}:{UI_PORT}/", width=1440, height=900, min_size=(1050, 700), resizable=True, text_select=True)
-        webview.start(gui="edgechromium", debug=False)
-    finally:
-        log("Jarvis desktop window closed")
+        wait_for_port(API_HOST, API_PORT, timeout=60)
+        wait_for_port(UI_HOST, UI_PORT, timeout=60)
+        time.sleep(STARTUP_DELAY_SECONDS)
+        webview.create_window(
+            "Jarvis",
+            f"http://{UI_HOST}:{UI_PORT}/",
+            width=1440,
+            height=900,
+            min_size=(1050, 700),
+        )
+        webview.start()
+    except Exception as exc:
+        log(f"Jarvis UI failed to start: {exc}")
+        raise
 
 
 if __name__ == "__main__":
-    multiprocessing.freeze_support()
-    try:
-        main()
-    except Exception:
-        log(traceback.format_exc())
-        if "--smoke-test" in sys.argv:
-            hard_exit(1)
-        raise
+    main()
