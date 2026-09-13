@@ -23,24 +23,18 @@ def _find_opencode() -> str | None:
     return None
 
 
-def run_coding_agent(
+def _run_opencode(
     workspace: Path,
     goal: str,
     *,
     model: str = DEFAULT_MODEL,
     timeout: int = 1800,
 ) -> Generator[dict, None, None]:
-    """Run the installed OpenCode coding agent headlessly in the Jarvis repo.
-
-    OpenCode owns the coding-agent loop (planning, file edits, commands and
-    verification). Jarvis only supervises the process and streams its output.
-    No local LLM is started by this wrapper.
-    """
     opencode = _find_opencode()
     if not opencode:
         yield {
             "type": "error",
-            "error": "OpenCode CLI was not found on PATH or in %APPDATA%\\npm.",
+            "error": "No coding agent is available. Install OpenHands SDK or OpenCode.",
             "final": True,
         }
         return
@@ -114,3 +108,38 @@ def run_coding_agent(
         return
 
     yield {"type": "done", "content": "OpenCode coding run completed successfully.", "final": True}
+
+
+def run_coding_agent(
+    workspace: Path,
+    goal: str,
+    *,
+    model: str = DEFAULT_MODEL,
+    timeout: int = 1800,
+) -> Generator[dict, None, None]:
+    """Run Jarvis's preferred remote coding engine.
+
+    OpenHands is preferred when explicitly selected or when installed and
+    JARVIS_AGENT_ENGINE=auto. OpenCode remains the compatibility fallback.
+    No local model is ever started by this module.
+    """
+    engine = os.getenv("JARVIS_AGENT_ENGINE", "auto").strip().lower()
+
+    if engine in {"auto", "openhands"}:
+        try:
+            from agent.openhands_runtime import OpenHandsUnavailable, openhands_available, run_once
+
+            if engine == "openhands" or openhands_available():
+                for event in run_once(workspace, goal):
+                    yield event
+                return
+        except OpenHandsUnavailable as exc:
+            if engine == "openhands":
+                yield {"type": "error", "error": str(exc), "final": True}
+                return
+        except Exception as exc:
+            if engine == "openhands":
+                yield {"type": "error", "error": f"OpenHands initialization failed: {exc}", "final": True}
+                return
+
+    yield from _run_opencode(workspace, goal, model=model, timeout=timeout)
