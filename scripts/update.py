@@ -11,7 +11,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -167,6 +166,8 @@ def _release_asset(release: dict, name: str) -> dict | None:
 
 
 def _download(url: str, destination: Path) -> None:
+    if not url:
+        raise RuntimeError("GitHub did not return a download URL for the update asset")
     request = Request(url, headers={"User-Agent": "Jarvis-Updater/1.0", "Accept": "application/octet-stream"})
     with urlopen(request, timeout=180) as response, destination.open("wb") as handle:
         shutil.copyfileobj(response, handle, length=1024 * 1024)
@@ -185,7 +186,8 @@ def _release_for_commit(commit: str) -> tuple[Path, str] | None:
         print("Verified Windows release is incomplete; waiting for CI to publish the executable.", file=sys.stderr)
         return None
 
-    commit_temp = Path(tempfile.mkstemp(prefix="jarvis-commit-", suffix=".txt")[1])
+    with tempfile.NamedTemporaryFile(prefix="jarvis-commit-", suffix=".txt", delete=False) as handle:
+        commit_temp = Path(handle.name)
     try:
         _download(commit_asset.get("browser_download_url", ""), commit_temp)
         published_commit = commit_temp.read_text(encoding="utf-8").strip()
@@ -195,7 +197,8 @@ def _release_for_commit(commit: str) -> tuple[Path, str] | None:
         print(f"Windows release is for {published_commit[:12]}; requested {commit[:12]}.", file=sys.stderr)
         return None
 
-    executable_temp = Path(tempfile.mkstemp(prefix="jarvis-update-", suffix=".exe")[1])
+    with tempfile.NamedTemporaryFile(prefix="jarvis-update-", suffix=".exe", delete=False) as handle:
+        executable_temp = Path(handle.name)
     try:
         _download(exe_asset.get("browser_download_url", ""), executable_temp)
         if executable_temp.stat().st_size < 1024 * 1024:
@@ -214,10 +217,24 @@ def _release_for_commit(commit: str) -> tuple[Path, str] | None:
         raise
 
 
+def _restart_args() -> list[str]:
+    encoded = os.environ.get("JARVIS_AUTO_UPDATE_ARGS", "")
+    if not encoded:
+        return []
+    try:
+        value = json.loads(encoded)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Invalid self-update restart arguments") from exc
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise RuntimeError("Invalid self-update restart arguments")
+    return value
+
+
 def _restart_helper(python_exe: str, target_exe: Path, staged_exe: Path, args: list[str]) -> bool:
-    helper = Path(tempfile.mkstemp(prefix="jarvis-exe-updater-", suffix=".py")[1])
+    with tempfile.NamedTemporaryFile(prefix="jarvis-exe-updater-", suffix=".py", delete=False) as handle:
+        helper = Path(handle.name)
     args_json = json.dumps(args)
-    script = f'''from __future__ import annotations
+    script = '''from __future__ import annotations
 
 import json
 import os
@@ -261,34 +278,6 @@ except OSError:
         print(f"Unable to launch executable replacement helper: {exc}", file=sys.stderr)
         helper.unlink(missing_ok=True)
         return False
-
-
-def update_executable(remote_commit: str) -> int:
-    target = Path(os.environ.get("JARVIS_AUTO_UPDATE_EXE", "")).resolve()
-    if not target.is_file() or target.suffix.lower() != ".exe":
-        print("Executable self-update is only available from the packaged Windows app.", file=sys.stderr)
-        return 10
-    try:
-        verified = _release_for_commit(remote_commit)
-    except Exception as exc:
-        print(f"Windows executable download failed: {exc}", file=sys.stderr)
-        return 11
-    if verified is None:
-        return 12
-    staged_exe, published_commit = verified
-    python_exe = sys.executable
-    if getattr(sys, "frozen", False):
-        python_exe = shutil.which("pythonw.exe") or shutil.which("python.exe") or shutil.which("pyw.exe") or shutil.which("py.exe") or ""
-    if not python_exe:
-        staged_exe.unlink(missing_ok=True)
-        print("No external Python interpreter is available for the hidden replacement helper.", file=sys.stderr)
-        return 13
-    args = [arg for arg in os.environ.get("JARVIS_AUTO_UPDATE_ARGS", "").split("\0") if arg]
-    if not _restart_helper(python_exe, target, staged_exe, args):
-        staged_exe.unlink(missing_ok=True)
-        return 14
-    print(f"Verified Windows executable {published_commit[:12]} is staged for replacement.")
-    return 0
 
 
 def main() -> int:
@@ -338,40 +327,47 @@ def main() -> int:
     if not remote_commit:
         print(f"Unable to resolve {remote_ref}; refusing to update.", file=sys.stderr)
         return 4
-    if old_commit == remote_commit and not args.update_executable:
-        print("Jarvis is up to date.")
-        return 0
 
     if args.update_executable:
-        if old_commit == remote_commit:
-            print("Source is already current; checking whether a verified Windows executable is available.")
-        else:
-            try:
-                verified = _release_for_commit(remote_commit)
-            except Exception as exc:
-                print(f"Windows executable verification failed: {exc}", file=sys.stderr)
-                return 11
-            if verified is None:
-                return 12
-            staged_exe, _ = verified
+        try:
+            verified = _release_for_commit(remote_commit)
+        except Exception as exc:
+            print(f"Windows executable verification failed: {exc}", file=sys.stderr)
+            return 11
+        if verified is None:
+            return 12
+        staged_exe, published_commit = verified
+        if old_commit != remote_commit:
             if run(["git", "merge", "--ff-only", remote_ref]) != 0:
                 staged_exe.unlink(missing_ok=True)
                 return 4
-            python_exe = shutil.which("pythonw.exe") or shutil.which("python.exe") or shutil.which("pyw.exe") or shutil.which("py.exe") or sys.executable
-            args_to_restart = [arg for arg in os.environ.get("JARVIS_AUTO_UPDATE_ARGS", "").split("\0") if arg]
-            target = Path(os.environ.get("JARVIS_AUTO_UPDATE_EXE", "")).resolve()
-            if not target.is_file():
-                staged_exe.unlink(missing_ok=True)
+        target = Path(os.environ.get("JARVIS_AUTO_UPDATE_EXE", "")).resolve()
+        if not target.is_file() or target.suffix.lower() != ".exe":
+            staged_exe.unlink(missing_ok=True)
+            if old_commit != remote_commit:
                 rollback_to(old_commit)
-                return 10
-            if not _restart_helper(python_exe, target, staged_exe, args_to_restart):
-                staged_exe.unlink(missing_ok=True)
+            print("Packaged Jarvis.exe was not identified; refusing self-update.", file=sys.stderr)
+            return 10
+        try:
+            restart_args = _restart_args()
+        except RuntimeError as exc:
+            staged_exe.unlink(missing_ok=True)
+            if old_commit != remote_commit:
                 rollback_to(old_commit)
-                return 14
-            print(f"Jarvis source and Windows executable update staged for {remote_commit[:12]}.")
-            return 0
+            print(str(exc), file=sys.stderr)
+            return 14
+        python_exe = shutil.which("pythonw.exe") or shutil.which("python.exe") or shutil.which("pyw.exe") or shutil.which("py.exe") or sys.executable
+        if not _restart_helper(python_exe, target, staged_exe, restart_args):
+            staged_exe.unlink(missing_ok=True)
+            if old_commit != remote_commit:
+                rollback_to(old_commit)
+            return 14
+        print(f"Jarvis source and verified Windows executable staged for {published_commit[:12]}.")
+        return 0
 
-        return 12
+    if old_commit == remote_commit:
+        print("Jarvis is up to date.")
+        return 0
 
     if args.build:
         npm = _npm_command()
@@ -386,9 +382,8 @@ def main() -> int:
             print("Frontend build failed; rolling back the update.", file=sys.stderr)
             return 8 if rollback_to(old_commit) else 9
 
-    if old_commit != remote_commit:
-        if run(["git", "merge", "--ff-only", remote_ref]) != 0:
-            return 4
+    if run(["git", "merge", "--ff-only", remote_ref]) != 0:
+        return 4
     print("Jarvis is up to date.")
     return 0
 
