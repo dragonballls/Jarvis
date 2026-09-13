@@ -38,6 +38,7 @@ export function useVoiceOutput(): UseVoiceOutputReturn {
   const speakingRef = useRef(false)
   const synthRef = useRef<SpeechSynthesis | null>(null)
   const cloudSpeakingRef = useRef(false)
+  const cloudRequestGenerationRef = useRef(0)
 
   const isSupported = typeof window !== 'undefined' && ('speechSynthesis' in window || 'Audio' in window)
 
@@ -93,10 +94,15 @@ export function useVoiceOutput(): UseVoiceOutputReturn {
 
   const speakWithCloudVoice = useCallback(async (text: string, options?: SpeakOptions) => {
     if (!cloudVoiceReady) return false
+
+    const requestGeneration = ++cloudRequestGenerationRef.current
     cleanupAudio()
+
     try {
       const blob = await synthesizeVoice(text)
+      if (requestGeneration !== cloudRequestGenerationRef.current) return true
       if (blob.size === 0) throw new Error('ElevenLabs returned empty audio')
+
       const url = URL.createObjectURL(blob)
       const audio = new Audio(url)
       audio.preload = 'auto'
@@ -105,11 +111,27 @@ export function useVoiceOutput(): UseVoiceOutputReturn {
       audioUrlRef.current = url
       cloudSpeakingRef.current = true
       setStatus('speaking')
-      audio.onended = () => { cleanupAudio(); setStatus('idle') }
-      audio.onerror = () => { cleanupAudio(); enqueueBrowserSpeech(text, options) }
+
+      audio.onended = () => {
+        if (requestGeneration !== cloudRequestGenerationRef.current) return
+        cleanupAudio()
+        setStatus('idle')
+      }
+      audio.onerror = () => {
+        if (requestGeneration !== cloudRequestGenerationRef.current) return
+        cleanupAudio()
+        enqueueBrowserSpeech(text, options)
+      }
+
       await audio.play()
+      if (requestGeneration !== cloudRequestGenerationRef.current) {
+        audio.pause()
+        audio.src = ''
+        URL.revokeObjectURL(url)
+      }
       return true
     } catch {
+      if (requestGeneration !== cloudRequestGenerationRef.current) return true
       cleanupAudio()
       return enqueueBrowserSpeech(text, options)
     }
@@ -125,6 +147,7 @@ export function useVoiceOutput(): UseVoiceOutputReturn {
   }, [isSupported, enabled, cloudVoiceReady, speakWithCloudVoice, enqueueBrowserSpeech])
 
   const stop = useCallback(() => {
+    cloudRequestGenerationRef.current += 1
     synthRef.current?.cancel()
     cleanupAudio()
     speakQueueRef.current = []
