@@ -32,8 +32,25 @@ jobs:
           python -m compileall -q mark53
           python -m pytest -q tests/test_component_boundaries.py -k 'mark53 or mark_updater'
 
+  mark-updater:
+    name: Mark updater
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Verify Mark updater boundary
+        run: |
+          set -euo pipefail
+          python -m compileall -q mark_updater
+          python -m pytest -q tests/test_component_boundaries.py -k 'mark_updater'
+
   self-coding:
-    name: Self-coding boundary
+    name: Jarvis self-coding
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -43,7 +60,7 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: python -m pip install --disable-pip-version-check -r requirements.txt
-      - name: Verify self-coding
+      - name: Verify self-coding boundary
         run: |
           set -euo pipefail
           python -m compileall -q agent self_coding
@@ -54,8 +71,8 @@ jobs:
             tests/test_agent_coding_session_integration.py \
             tests/test_agent_safe_coding_integration.py
 
-  openhands-emrg:
-    name: OpenHands and EMRG
+  openhands:
+    name: OpenHands
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -63,13 +80,30 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Install dependencies
+      - name: Install OpenHands
         run: python -m pip install --disable-pip-version-check -r requirements.txt
-      - name: Verify OpenHands and EMRG
+      - name: Verify OpenHands boundary
         run: |
           set -euo pipefail
-          python -m compileall -q agent core
-          python -m pytest -q tests/test_agent_integrations.py tests/test_component_boundaries.py -k 'self_coding'
+          python -c "import openhands.sdk, openhands.tools; print('OpenHands import OK')"
+          python -m pytest -q tests/test_agent_integrations.py -k 'openhands'
+
+  emrg:
+    name: EMRG
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install EMRG
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Verify EMRG boundary
+        run: |
+          set -euo pipefail
+          python -c "import emrg; print('EMRG import OK')"
+          python -m pytest -q tests/test_agent_integrations.py -k 'emrg'
 
   gods-eye:
     name: God's Eye
@@ -134,7 +168,7 @@ jobs:
     name: Component boundary gate
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [mark53, self-coding, openhands-emrg, gods-eye, providers, jarvis-updater]
+    needs: [mark53, mark-updater, self-coding, openhands, emrg, gods-eye, providers, jarvis-updater]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v7
