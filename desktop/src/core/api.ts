@@ -196,7 +196,7 @@ export function connectEventSource(
       clearDropTimer()
       if (!reportedOffline) {
         dropTimer = setTimeout(() => {
-          if (stopped || connected || currentGeneration !== generation) return
+          if (stopped || connected) return
           reportedOffline = true
           onStatus?.(false)
           onError?.()
