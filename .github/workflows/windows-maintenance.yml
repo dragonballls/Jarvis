@@ -1,0 +1,71 @@
+name: Windows maintenance verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: windows-maintenance-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  maintenance-unit:
+    name: Maintenance unit and safety tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check pytest
+      - name: Compile and test maintenance package
+        run: |
+          set -euo pipefail
+          python -m compileall -q windows_maintenance
+          python -m pytest -q windows_maintenance/tests
+
+  maintenance-windows:
+    name: Windows adapter verification
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check pytest
+      - name: Compile and run maintenance tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m compileall -q windows_maintenance
+          python -m pytest -q windows_maintenance/tests
+      - name: Verify package import isolation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -c "import windows_maintenance; print(windows_maintenance.__name__)"
+
+  existing-regressions:
+    name: Existing Jarvis regression gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [maintenance-unit]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Run backend regression tests
+        run: python -m pytest -q tests/
