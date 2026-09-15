@@ -80,8 +80,9 @@ class MaintenancePlan:
 class DiagnosticReport:
     findings: tuple[DiagnosticFinding, ...] = ()
     failures: tuple[str, ...] = ()
+    completed_checks: int = 0
 
     def summary(self) -> str:
         if not self.findings and not self.failures:
-            return "No diagnostic findings were collected."
-        return f"Collected {len(self.findings)} findings across Windows health checks."
+            return f"Completed {self.completed_checks} Windows health checks with no findings."
+        return f"Collected {len(self.findings)} findings across {self.completed_checks} completed Windows health checks."
