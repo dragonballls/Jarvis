@@ -1,7 +1,7 @@
 # Guarded Windows Maintenance and Repair Design
 
 **Date:** 2026-09-15  
-**Status:** Design approved in chat; awaiting written-spec review before implementation planning.
+**Status:** Approved for implementation planning
 
 ## Goal
 
@@ -15,7 +15,7 @@ Create a dedicated top-level package:
 
 `windows_maintenance/`
 
-The package owns Windows maintenance discovery, policy evaluation, action planning, execution adapters, rollback records, and maintenance-specific tests. It does not own Jarvis self-coding, Git checkout updates, Windows application packaging, God's Eye, provider routing, or UI state.
+The package owns Windows maintenance discovery, policy evaluation, action planning, execution adapters, rollback records, persistent maintenance policy, and maintenance-specific tests. It does not own Jarvis self-coding, Git checkout updates, Windows application packaging, God's Eye, provider routing, or UI state.
 
 Jarvis communicates with the subsystem through a narrow maintenance facade/service interface. Existing agent and API layers remain responsible for deciding when a user request should invoke that facade; they must not embed raw PowerShell or Windows mutation logic.
 
@@ -31,13 +31,21 @@ Actions may include stopping eligible user applications/processes. The policy mu
 
 Jarvis should prefer recommendation over automatic termination when confidence is low or when the process relationship is unclear.
 
-### Startup management
+### Persistent startup management
 
 Inspect Windows startup mechanisms relevant to the current user and common application startup locations. Classify entries as protected, user-managed, unknown, or unsafe-to-change.
 
+Jarvis can disable eligible user-application startup entries so they do not automatically launch at Windows sign-in. This is an explicit persistent configuration change, not merely a one-time process termination.
+
+The supported startup targets initially include user-scoped startup folders, user Run/RunOnce entries, and supported per-user startup registrations discoverable through Windows APIs or typed PowerShell adapters. Machine-wide startup configuration is treated as higher risk and is not silently modified from vague optimization requests.
+
 Disable only eligible user-application startup entries. Never blindly disable all startup items. Protect Windows components, drivers, security software, Jarvis, dependencies, and entries whose ownership or impact cannot be established safely.
 
-Every startup mutation records the source, previous state, new state, reason, and reversibility information.
+Every startup mutation records the source, previous state, new state, reason, target identity, and reversibility information. Jarvis also stores an explicit maintenance-owned policy entry when the user asks it to keep a specific application from returning to startup, allowing later diagnostics to explain why that entry remains disabled.
+
+A startup-protection policy must be idempotent: repeated maintenance runs must not keep rewriting the same entry, and an already-disabled protected target must not be changed.
+
+When an application re-creates its own startup registration, Jarvis may detect that condition during a later maintenance pass and propose re-enforcement. It must not continuously fight application installers or updates in a hidden background loop during the initial implementation.
 
 ### Diagnostics
 
@@ -55,6 +63,8 @@ A diagnostic collector gathers, as available:
 - common configuration anomalies
 
 Diagnostics are read-only. Collection failures are captured per-check and do not abort unrelated checks.
+
+A full diagnostic request should return a structured health report with findings grouped by severity and confidence, plus recommended next actions. It must clearly distinguish observed facts from heuristics.
 
 ### Safe repair
 
@@ -81,6 +91,8 @@ The policy is deny-by-default for any action outside an explicitly supported ope
 
 Protected targets are evaluated before a command or API is executed, not after.
 
+The persistent startup policy is itself protected from arbitrary model edits: the model may request a policy change through a typed action, but cannot directly rewrite policy storage.
+
 ## Action Planning
 
 Natural-language requests are converted into a structured maintenance plan before execution. A plan contains:
@@ -96,6 +108,8 @@ Natural-language requests are converted into a structured maintenance plan befor
 - verification criteria
 
 The planner must never turn a vague request such as “fix everything” into unrestricted system mutation. It should select the safest supported plan that addresses the detected issues and report skipped items with reasons.
+
+Examples such as “keep Steam from running in the background and stop it launching at startup” produce two distinct operations with separate policy checks: an immediate eligible process action and a persistent user-startup mutation.
 
 ## Execution Adapters
 
@@ -119,7 +133,7 @@ The existing minimal API remains the public surface for chat and self-coding. Ma
 
 A narrowly scoped maintenance service/facade may be exposed internally to the agent runtime. Any future HTTP maintenance endpoint, if justified later, must be separately authenticated, policy-checked, and added only with dedicated tests.
 
-The existing `desktop/api_server.py` minimal-mode route protection must remain intact. fileciteturn13file0
+The existing `desktop/api_server.py` minimal-mode route protection must remain intact.
 
 ## Natural-Language Behaviors
 
@@ -150,21 +164,22 @@ Dedicated tests live under `windows_maintenance/tests/` and must cover:
 - structured action validation
 - read-only diagnostics
 - process cleanup safety
-- startup mutation safety
+- persistent startup mutation safety and idempotence
+- startup policy persistence/reconciliation
 - rollback bookkeeping
 - verification and rollback-on-failure behavior
 - malformed/ambiguous natural-language planning inputs at the facade boundary
 - component import isolation
 
-Windows-specific integration tests should run on Windows CI and use safe fixtures/mocks for mutation paths. Cross-platform unit tests should cover policy, planning, validation, and state-machine logic without requiring Windows.
+Windows-specific integration tests should run on Windows CI and use safe fixtures/mocks for mutation paths. Cross-platform unit tests should cover policy, planning, validation, persistence, and state-machine logic without requiring Windows.
 
 Relevant existing Jarvis regression and packaging tests remain required for release readiness.
 
 ## Compatibility and Continuity
 
-The design preserves the existing architectural separation: self-coding remains responsible for bounded source changes, the Jarvis Windows updater remains responsible for Jarvis release installation, and external components retain their own lifecycles. fileciteturn12file0
+The design preserves the existing architectural separation: self-coding remains responsible for bounded source changes, the Jarvis Windows updater remains responsible for Jarvis release installation, and external components retain their own lifecycles.
 
-The user-facing product remains the single visible chat bar. Maintenance activity is communicated through normal Jarvis responses rather than introducing a dashboard or persistent maintenance UI. fileciteturn7file0
+The user-facing product remains the single visible chat bar. Maintenance activity is communicated through normal Jarvis responses rather than introducing a dashboard or persistent maintenance UI.
 
 ## Non-Goals
 
@@ -178,6 +193,7 @@ This first subsystem does not provide:
 - automatic bootloader or partition changes
 - silent mass process termination
 - automatic changes to other Jarvis component installations or update state
+- a hidden always-on loop that continually disables application startup registrations
 
 ## Success Criteria
 
@@ -187,8 +203,9 @@ The feature is ready only when:
 2. Every supported mutation passes through policy evaluation.
 3. Protected targets are rejected before execution.
 4. Medium/high-risk actions follow the required confirmation policy.
-5. Mutating operations record enough state for supported rollback.
-6. Verification is mandatory for completed mutations and failed verification prevents blind continuation.
-7. Windows CI validates safe integration paths.
-8. Existing Jarvis backend, desktop build, packaging, startup, self-coding, and minimal-interface regression tests remain passing.
-9. The component can fail without making unrelated Jarvis functions unavailable.
+5. Supported user-app startup changes persist across reboot/sign-in and are idempotent.
+6. Mutating operations record enough state for supported rollback.
+7. Verification is mandatory for completed mutations and failed verification prevents blind continuation.
+8. Windows CI validates safe integration paths.
+9. Existing Jarvis backend, desktop build, packaging, startup, self-coding, and minimal-interface regression tests remain passing.
+10. The component can fail without making unrelated Jarvis functions unavailable.
