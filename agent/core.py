@@ -27,10 +27,38 @@ _DESKTOP_GOAL_MARKERS = (
     "arrange window", "manage my apps", "close window", "focus window", "open app",
 )
 
+_MAINTENANCE_MARKERS = (
+    "diagnose my pc", "diagnose my computer", "fix my pc", "fix my computer",
+    "repair my pc", "repair my computer", "optimize my pc", "optimize my computer",
+    "clean up whatever is wasting resources", "clean up my pc", "stop steam",
+    "startup", "running in the background", "wasting resources", "windows errors",
+    "network problems", "system files",
+)
+
 
 def _is_desktop_goal(goal: str) -> bool:
     lowered = goal.lower()
     return any(marker in lowered for marker in _DESKTOP_GOAL_MARKERS)
+
+
+def _is_maintenance_goal(goal: str) -> bool:
+    lowered = goal.lower()
+    return any(marker in lowered for marker in _MAINTENANCE_MARKERS)
+
+
+def _maintenance_events(goal: str):
+    try:
+        from windows_maintenance import MaintenanceFacade
+        response = MaintenanceFacade().handle(goal)
+        if response.report is not None:
+            yield {"type": "maintenance", "event": "diagnosis", "summary": response.report.summary(), "findings": [finding.__dict__ for finding in response.report.findings], "failures": list(response.report.failures)}
+        if response.plan is not None:
+            yield {"type": "maintenance", "event": "plan", "intent": response.plan.intent, "actions": [action.__dict__ | {"risk": action.risk.value} for action in response.plan.actions], "skipped": list(response.plan.skipped_risks)}
+        for result in response.results:
+            yield {"type": "maintenance", "event": "result", "operation": result.operation, "target": result.target_id, "success": result.success, "verified": result.verified, "changed": result.changed, "detail": result.detail, "error": result.error}
+        yield {"type": "done", "content": response.message or "Maintenance check complete.", "final": True}
+    except Exception as exc:
+        yield {"type": "done", "content": f"Windows maintenance is unavailable without affecting normal Jarvis operation: {exc}", "final": True}
 
 
 def _desktop_context() -> str:
@@ -122,6 +150,9 @@ class Agent:
     def run(self, user_input: str):
         self._executor.output_dir = self._output_dir
         self._coding_executor.output_dir = self._output_dir
+        if _is_maintenance_goal(user_input):
+            yield from _maintenance_events(user_input)
+            return
         memory = get_memory_manager()
         context = memory.inject_context(user_input)
         if context:
