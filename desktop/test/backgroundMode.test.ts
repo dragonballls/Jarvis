@@ -1,5 +1,6 @@
 import { describe, expect, beforeEach, it } from 'vitest'
 import {
+  bindDocumentVisibility,
   getJarvisLifecycle,
   setJarvisLifecycle,
   subscribeJarvisLifecycle,
@@ -32,5 +33,19 @@ describe('Jarvis background lifecycle', () => {
 
     removeBad()
     removeGood()
+  })
+
+  it('maps document visibility to lifecycle state', () => {
+    const original = document.visibilityState
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    const unbind = bindDocumentVisibility()
+    expect(getJarvisLifecycle()).toBe('background')
+
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(getJarvisLifecycle()).toBe('foreground')
+
+    unbind()
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: original })
   })
 })
