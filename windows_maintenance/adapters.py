@@ -81,9 +81,49 @@ def startup_entries() -> list[dict[str, Any]]:
     return raw if isinstance(raw, list) else [raw]
 
 
-def startup_disable(name: str) -> tuple[bool, str]:
+def disable_run_entry(name: str, source: str) -> dict[str, Any]:
+    if os.name != "nt":
+        raise RuntimeError("Windows-only operation")
+    allowed_source = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+    if source != allowed_source:
+        raise ValueError("only the current-user Run key is supported")
+    escaped = name.replace("'", "''")
+    script = f"$key='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'; $p=Get-ItemProperty -Path $key -ErrorAction Stop; if(-not ($p.PSObject.Properties.Name -contains '{escaped}')){{throw 'startup entry not found'}}; $old=[string]$p.PSObject.Properties['{escaped}'].Value; Remove-ItemProperty -Path $key -Name '{escaped}' -ErrorAction Stop; [pscustomobject]@{{previous=$old;present=[bool](Get-ItemProperty -Path $key -Name '{escaped}' -ErrorAction SilentlyContinue)}} | ConvertTo-Json -Compress"
+    value = _ps(script)
+    return value if isinstance(value, dict) else {"previous": str(value), "present": True}
+
+
+def restore_run_entry(name: str, previous: str) -> bool:
+    if os.name != "nt":
+        return False
+    name_e = name.replace("'", "''")
+    prev_e = previous.replace("'", "''")
+    _ps(f"New-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name '{name_e}' -Value '{prev_e}' -PropertyType String -Force | Out-Null")
+    return True
+
+
+def repair_system_files(scan_only: bool = False) -> tuple[bool, str]:
     if os.name != "nt":
         return False, "Windows-only operation"
-    escaped = name.replace("'", "''")
-    _ps(f"$item=Get-CimInstance Win32_StartupCommand | Where-Object Name -eq '{escaped}' | Select -First 1; if(-not $item){{throw 'startup item not found'}}; Disable-ScheduledTask -TaskName $item.Name -ErrorAction SilentlyContinue | Out-Null")
-    return True, "startup entry disable request applied"
+    if scan_only:
+        commands = [["DISM.exe", "/Online", "/Cleanup-Image", "/ScanHealth"], ["sfc.exe", "/verifyonly"]]
+    else:
+        commands = [["DISM.exe", "/Online", "/Cleanup-Image", "/RestoreHealth"], ["sfc.exe", "/scannow"]]
+    logs = []
+    for cmd in commands:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=1800, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        logs.append(f"{' '.join(cmd)} -> {p.returncode}")
+        if p.returncode != 0:
+            return False, " ; ".join(logs)
+    return True, " ; ".join(logs)
+
+
+def network_reset() -> tuple[bool, str]:
+    if os.name != "nt":
+        return False, "Windows-only operation"
+    commands = [["ipconfig.exe", "/flushdns"], ["netsh.exe", "winsock", "reset"]]
+    for cmd in commands:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if p.returncode != 0:
+            return False, f"{' '.join(cmd)} failed with {p.returncode}"
+    return True, "DNS cache flushed and Winsock reset requested"
