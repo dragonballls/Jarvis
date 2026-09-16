@@ -111,6 +111,16 @@ input {
   opacity: 0.68;
 }
 
+/* Minimized/hidden mode: cull the presentation subtree without unmounting
+   React or interaction hooks such as voice/camera/hand-control sessions. */
+html[data-jarvis-lifecycle="background"] #root {
+  content-visibility: hidden;
+}
+
+html[data-jarvis-lifecycle="background"] body {
+  background: transparent;
+}
+
 @media (max-width: 600px) {
   .jarvis-shell {
     padding: 14px;
