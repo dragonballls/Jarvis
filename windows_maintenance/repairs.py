@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .adapters import network_reset, repair_system_files
+from .adapters import repair_system_files
 from .models import MaintenanceAction, OperationResult, RiskClass
 from .policy import MaintenancePolicy
 
