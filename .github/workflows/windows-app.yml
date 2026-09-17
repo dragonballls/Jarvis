@@ -124,7 +124,7 @@ jobs:
 
       - name: Verify packaged GUI path on hosted runner
         shell: pwsh
-        run: ./packaging/windows/gui_smoke_test.ps1
+        run: ./packaging/windows/gui_smoke_test.ps1 -HostedRunner
 
       - name: Upload single-file Windows app
         uses: actions/upload-artifact@v4
