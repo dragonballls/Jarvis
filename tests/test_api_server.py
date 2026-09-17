@@ -1,9 +1,8 @@
 """Tests for the minimal Jarvis API server (desktop/api_server.py).
 
-The server deliberately exposes only the core surface: conversation,
-self-coding autopilot, and health. Every other endpoint is disabled in
-minimal mode, so the tests here assert both the live surface and the
-"Disabled in minimal Jarvis mode" guard.
+The server exposes conversation, self-coding autopilot, provider settings, voice,
+and the consent-based family-location integration while retaining the minimal
+runtime boundary and authentication checks.
 """
 
 import sys
@@ -51,6 +50,7 @@ class TestHealth:
             "voice",
             "openhands",
             "emrg_evolution",
+            "family_location",
         ]
         assert data["name"] == "Jarvis"
 
