@@ -75,8 +75,8 @@ def test_service_track_builds_gods_eye_follow_request() -> None:
             return Life360Location(alias=alias, name="Alex", latitude=34.1, longitude=-118.2, updated_at="now")
 
     class Bridge:
-        def capability(self, name: str, **arguments):
-            return {"capability": name, "arguments": arguments}
+        def capability(self, capability_name: str, **arguments):
+            return {"capability": capability_name, "arguments": arguments}
 
         def location_url(self, latitude: float, longitude: float, *, zoom: float | None = None) -> str:
             return f"http://127.0.0.1:4173/?lat={latitude}&lon={longitude}&zoom={zoom}"
