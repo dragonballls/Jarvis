@@ -88,6 +88,8 @@ if ($env:GITHUB_WORKSPACE -and (Test-Path -LiteralPath (Join-Path $env:GITHUB_WO
 }
 $env:USERPROFILE = $smokeHome
 $env:HOME = $smokeHome
+$env:JARVIS_SMOKE_TEST = '1'
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--disable-gpu'
 
 $process = Start-Process -FilePath $exe -WorkingDirectory $build -PassThru
 $handle = [IntPtr]::Zero
