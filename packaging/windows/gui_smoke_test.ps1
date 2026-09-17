@@ -9,6 +9,11 @@ if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
 }
 Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
 
+$smokeHome = Join-Path ([System.IO.Path]::GetTempPath()) ("Jarvis-Gui-Smoke-" + [guid]::NewGuid().ToString('N'))
+$selfCodingHome = Join-Path $smokeHome 'Jarvis-SelfCoding-Workspace'
+New-Item -ItemType Directory -Path (Join-Path $selfCodingHome '.git') -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $selfCodingHome 'agent') -Force | Out-Null
+
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -81,6 +86,8 @@ function Get-JarvisWindowHandle([System.Diagnostics.Process] $process) {
 if ($env:GITHUB_WORKSPACE -and (Test-Path -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'desktop\dist\index.html'))) {
     $env:JARVIS_WORKSPACE = $env:GITHUB_WORKSPACE
 }
+$env:USERPROFILE = $smokeHome
+$env:HOME = $smokeHome
 
 $process = Start-Process -FilePath $exe -WorkingDirectory $build -PassThru
 $handle = [IntPtr]::Zero
@@ -191,4 +198,5 @@ finally {
         try { $process.WaitForExit(5000) } catch { }
     }
     $process.Dispose()
+    Remove-Item -LiteralPath $smokeHome -Recurse -Force -ErrorAction SilentlyContinue
 }
