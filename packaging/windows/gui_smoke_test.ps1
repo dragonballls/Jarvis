@@ -76,7 +76,6 @@ function Get-JarvisWindowHandle([System.Diagnostics.Process] $process) {
     return [IntPtr]::Zero
 }
 
-$env:JARVIS_SMOKE_TEST = '1'
 if ($env:GITHUB_WORKSPACE -and (Test-Path -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'desktop\dist\index.html'))) {
     $env:JARVIS_WORKSPACE = $env:GITHUB_WORKSPACE
 }
