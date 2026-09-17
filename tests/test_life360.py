@@ -67,3 +67,24 @@ def test_service_status_never_returns_share_links() -> None:
     status = service.status()
     assert status["members"] == [{"alias": "alex", "has_shared_link": True, "has_location": False}]
     assert "opaque-token" not in str(status)
+
+
+def test_service_track_builds_gods_eye_follow_request() -> None:
+    class Reader:
+        def read(self, _share_url: str, *, alias: str) -> Life360Location:
+            return Life360Location(alias=alias, name="Alex", latitude=34.1, longitude=-118.2, updated_at="now")
+
+    class Bridge:
+        def capability(self, name: str, **arguments):
+            return {"capability": name, "arguments": arguments}
+
+        def location_url(self, latitude: float, longitude: float, *, zoom: float | None = None) -> str:
+            return f"http://127.0.0.1:4173/?lat={latitude}&lon={longitude}&zoom={zoom}"
+
+    service = Life360Service(reader=Reader(), bridge=Bridge())
+    service.add_shared_link("alex", "https://share.life360.com/share/opaque-token")
+    result = service.track("alex")
+    assert result["gods_eye"]["capability"] == "track_object"
+    assert result["gods_eye"]["arguments"]["follow"] is True
+    assert result["location"]["latitude"] == 34.1
+    assert "opaque-token" not in str(result)
