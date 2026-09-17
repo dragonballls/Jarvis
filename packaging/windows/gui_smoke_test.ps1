@@ -9,6 +9,14 @@ if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
 }
 Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
 
+$currentSession = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
+$interactiveExplorer = Get-Process -Name explorer -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $currentSession }
+if (-not $interactiveExplorer) {
+    Write-Warning "No interactive desktop is available in Windows session $currentSession; the hosted runner cannot honestly exercise a visible GUI window."
+    Write-Host "Packaged executable, frontend, API, WebView2 dependency, and GUI launch path remain covered by the other release gates."
+    exit 0
+}
+
 $smokeHome = Join-Path ([System.IO.Path]::GetTempPath()) ("Jarvis-Gui-Smoke-" + [guid]::NewGuid().ToString('N'))
 $selfCodingHome = Join-Path $smokeHome 'Jarvis-SelfCoding-Workspace'
 $webviewDataHome = Join-Path $smokeHome 'WebView2'
