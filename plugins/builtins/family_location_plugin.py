@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from integrations.life360.service import Life360Service
+from integrations.life360.service import Life360Service, get_family_location_service
 from plugins.base import ToolPlugin
 
 
-_SERVICE = Life360Service()
+_SERVICE = get_family_location_service()
 
 
 class FamilyLocationConfigurePlugin(ToolPlugin):
@@ -92,5 +92,11 @@ class FamilyLocationRemovePlugin(ToolPlugin):
         return {"success": removed, "alias": alias.strip(), "removed": removed}
 
 
-def get_family_location_service() -> Life360Service:
-    return _SERVICE
+__all__ = [
+    "FamilyLocationConfigurePlugin",
+    "FamilyLocationStatusPlugin",
+    "FamilyLocationPlugin",
+    "FamilyLocationTrackPlugin",
+    "FamilyLocationRemovePlugin",
+    "get_family_location_service",
+]
