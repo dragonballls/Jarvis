@@ -1,4 +1,4 @@
-from main import _launch_ui
+from main import _launch_ui, _repl_loop
 
 
 def test_launch_ui_builds_commands(monkeypatch):
@@ -158,3 +158,35 @@ def test_launch_ui_recovers_when_child_process_stops(monkeypatch):
 
     assert starts == 2
     assert monitor_starts == 1
+
+
+def test_repl_loop_survives_agent_error(monkeypatch):
+    """A crashing agent run must not kill the CLI session."""
+    inputs = iter(["hello", "/exit"])
+    errors_seen: list[str] = []
+
+    class FakeAgent:
+        language = "english"
+
+        def run(self, _user_input):
+            raise RuntimeError("provider exploded")
+
+        def resolve_approval(self, request_id, allowed):
+            return True
+
+        def clear(self):
+            pass
+
+        def set_language(self, lang):
+            self.language = lang
+
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
+    monkeypatch.setattr(
+        "main.print_colored",
+        lambda text, _color="37": errors_seen.append(text) if "Error while processing your request" in text else None,
+    )
+
+    _repl_loop(FakeAgent())
+
+    assert len(errors_seen) == 1
+    assert "provider exploded" in errors_seen[0]

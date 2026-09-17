@@ -274,27 +274,31 @@ def _repl_loop(agent: Agent):
                 break
             continue
         print()
-        for event in agent.run(user_input):
-            if event["type"] == "tokens":
-                print(event["content"], end="", flush=True)
-            elif event["type"] == "requires_confirmation":
-                print_colored(f"  ⚠ Tool '{event['tool']}' requires confirmation:", "33")
-                print_colored(f"     Args: {event.get('args') or '{}'}", "90")
-                while True:
-                    try:
-                        answer = input("\033[33m  Allow? [y/N]\033[0m ").strip().lower()
-                    except (EOFError, KeyboardInterrupt):
-                        answer = "n"
-                    if answer in ("y", "yes"):
-                        agent.resolve_approval(event["request_id"], True)
-                        break
-                    if answer in ("n", "no", ""):
-                        agent.resolve_approval(event["request_id"], False)
-                        break
-            elif event["type"] == "tool_result":
-                for t in event.get("tools", []):
-                    print_colored(f"  🛠 {t['name']}({t['args']})", "90")
-                    print_colored(f"     Result: {t['result']}", "90")
+        try:
+            for event in agent.run(user_input):
+                if event["type"] == "tokens":
+                    print(event["content"], end="", flush=True)
+                elif event["type"] == "requires_confirmation":
+                    print_colored(f"  ⚠ Tool '{event['tool']}' requires confirmation:", "33")
+                    print_colored(f"     Args: {event.get('args') or '{}'}", "90")
+                    while True:
+                        try:
+                            answer = input("\033[33m  Allow? [y/N]\033[0m ").strip().lower()
+                        except (EOFError, KeyboardInterrupt):
+                            answer = "n"
+                        if answer in ("y", "yes"):
+                            agent.resolve_approval(event["request_id"], True)
+                            break
+                        if answer in ("n", "no", ""):
+                            agent.resolve_approval(event["request_id"], False)
+                            break
+                elif event["type"] == "tool_result":
+                    for t in event.get("tools", []):
+                        print_colored(f"  🛠 {t['name']}({t['args']})", "90")
+                        print_colored(f"     Result: {t['result']}", "90")
+        except Exception as exc:
+            print_colored(f"  ⚠ Error while processing your request: {exc}", "31")
+            print("Nothing was lost — your conversation continues. Try again or use /clear.", "90")
         print("\n")
 
 

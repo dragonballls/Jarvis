@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -28,6 +27,7 @@ def test_engine_explicit_openhands_is_used(monkeypatch: pytest.MonkeyPatch, tmp_
         return [{"type": "done", "content": "ok", "final": True}]
 
     monkeypatch.setenv("JARVIS_AGENT_ENGINE", "openhands")
+    monkeypatch.setattr("agent.openhands_runtime.openhands_available", lambda: True)
     monkeypatch.setattr("agent.openhands_runtime.run_once", fake_run_once)
     events = list(opencode_agent.run_coding_agent(tmp_path, "test goal"))
     assert calls == [(tmp_path.resolve(), "test goal")]
