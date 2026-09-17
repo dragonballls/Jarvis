@@ -1,0 +1,80 @@
+name: Windows GUI (Interactive)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  gui:
+    name: Packaged GUI lifecycle
+    runs-on: [self-hosted, windows, gui]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install runtime dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pywebview pyinstaller
+
+      - name: Install frontend dependencies
+        working-directory: desktop
+        shell: pwsh
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: desktop
+        shell: pwsh
+        run: npm run build
+
+      - name: Build Windows app
+        shell: pwsh
+        run: python packaging/windows/build.py
+
+      - name: Ensure Microsoft Edge WebView2 Runtime
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP "MicrosoftEdgeWebview2Setup.exe"
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?linkid=2124703" -OutFile $installer
+          $installerProcess = Start-Process -FilePath $installer -ArgumentList "/silent", "/install" -Wait -PassThru
+          if ($installerProcess.ExitCode -ne 0) {
+            throw "WebView2 runtime installer failed with exit code $($installerProcess.ExitCode)"
+          }
+          Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
+
+      - name: Verify interactive desktop
+        shell: pwsh
+        run: |
+          $session = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
+          $explorer = Get-Process -Name explorer -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $session }
+          if (-not $explorer) {
+            throw "Interactive Windows desktop is not available in runner session $session."
+          }
+          Write-Host "Interactive Windows desktop verified in session $session."
+
+      - name: Exercise real packaged GUI lifecycle
+        shell: pwsh
+        run: ./packaging/windows/gui_smoke_test.ps1
