@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from integrations.life360.service import Life360Service, get_family_location_service
+from integrations.life360.service import get_family_location_service
 from plugins.base import ToolPlugin
 
 
