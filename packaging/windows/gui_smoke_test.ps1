@@ -2,10 +2,12 @@ $ErrorActionPreference = 'Stop'
 
 $build = Join-Path $PSScriptRoot '..\..\build\windows'
 $exe = Join-Path $build 'Jarvis.exe'
+$log = Join-Path $build 'jarvis.log'
 
 if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
     throw "Missing packaged executable: $exe"
 }
+Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
 
 Add-Type @'
 using System;
@@ -97,7 +99,15 @@ try {
     }
 
     if ($handle -eq [IntPtr]::Zero -or -not [JarvisGuiWin32]::IsWindow($handle)) {
-        throw 'The packaged Jarvis executable did not create a real top-level Jarvis window within 90 seconds.'
+        if (Test-Path -LiteralPath $log) {
+            Write-Host '----- packaged Jarvis GUI startup log -----'
+            Get-Content -LiteralPath $log -Raw | Write-Host
+            Write-Host '----- end packaged Jarvis GUI startup log -----'
+        } else {
+            Write-Host 'Packaged Jarvis produced no jarvis.log before the GUI timeout.'
+        }
+        $process.Refresh()
+        throw "The packaged Jarvis executable did not create a real top-level Jarvis window within 90 seconds. PID=$($process.Id), HasExited=$($process.HasExited), ExitCode=$($process.ExitCode)."
     }
 
     [UIntPtr]$result = [UIntPtr]::Zero
