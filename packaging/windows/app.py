@@ -85,6 +85,9 @@ def hard_exit(code: int) -> None:
 
 
 def self_coding_workspace() -> Path:
+    configured = os.environ.get("JARVIS_SELF_CODING_WORKSPACE", "").strip()
+    if configured:
+        return Path(configured).expanduser()
     return Path.home() / WORKSPACE_NAME
 
 
