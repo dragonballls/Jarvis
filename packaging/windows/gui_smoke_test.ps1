@@ -1,3 +1,7 @@
+param(
+    [switch]$HostedRunner
+)
+
 $ErrorActionPreference = 'Stop'
 
 $build = Join-Path $PSScriptRoot '..\..\build\windows'
@@ -9,20 +13,20 @@ if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
 }
 Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
 
-$currentSession = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
-$interactiveExplorer = Get-Process -Name explorer -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $currentSession }
-if (-not $interactiveExplorer) {
-    Write-Warning "No interactive desktop is available in Windows session $currentSession; the hosted runner cannot honestly exercise a visible GUI window."
-    Write-Host "Packaged executable, frontend, API, WebView2 dependency, and GUI launch path remain covered by the other release gates."
-    exit 0
-}
-
 $smokeHome = Join-Path ([System.IO.Path]::GetTempPath()) ("Jarvis-Gui-Smoke-" + [guid]::NewGuid().ToString('N'))
 $selfCodingHome = Join-Path $smokeHome 'Jarvis-SelfCoding-Workspace'
 $webviewDataHome = Join-Path $smokeHome 'WebView2'
 New-Item -ItemType Directory -Path (Join-Path $selfCodingHome '.git') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $selfCodingHome 'agent') -Force | Out-Null
 New-Item -ItemType Directory -Path $webviewDataHome -Force | Out-Null
+
+$interactiveExplorer = Get-Process -Name explorer -ErrorAction SilentlyContinue |
+    Where-Object { $_.SessionId -eq [System.Diagnostics.Process]::GetCurrentProcess().SessionId }
+if (-not $HostedRunner -and -not $interactiveExplorer) {
+    Write-Warning "No interactive desktop is available in this Windows session; skipping visible HWND lifecycle checks."
+    Write-Host "Packaged executable launch remains covered by the hosted bootstrap gate."
+    exit 0
+}
 
 Add-Type @'
 using System;
@@ -104,6 +108,46 @@ $process = Start-Process -FilePath $exe -WorkingDirectory $build -PassThru
 $handle = [IntPtr]::Zero
 
 try {
+    if ($HostedRunner) {
+        $deadline = (Get-Date).AddSeconds(90)
+        $startupMarker = 'Jarvis services ready; opening desktop window'
+        $markerSeen = $false
+
+        while ((Get-Date) -lt $deadline) {
+            if ($process.HasExited) {
+                throw "Jarvis.exe exited before completing its GUI bootstrap (code $($process.ExitCode))."
+            }
+
+            if (Test-Path -LiteralPath $log) {
+                $contents = Get-Content -LiteralPath $log -Raw -ErrorAction SilentlyContinue
+                if ($contents -match [regex]::Escape($startupMarker)) {
+                    $markerSeen = $true
+                    break
+                }
+            }
+            Start-Sleep -Milliseconds 500
+        }
+
+        if (-not $markerSeen) {
+            if (Test-Path -LiteralPath $log) {
+                Write-Host '----- packaged Jarvis GUI startup log -----'
+                Get-Content -LiteralPath $log -Raw | Write-Host
+                Write-Host '----- end packaged Jarvis GUI startup log -----'
+            }
+            throw 'The packaged Jarvis executable did not reach the GUI startup marker within 90 seconds.'
+        }
+
+        Start-Sleep -Seconds 3
+        $process.Refresh()
+        if ($process.HasExited) {
+            throw "Jarvis.exe exited after reaching the GUI startup marker (code $($process.ExitCode))."
+        }
+
+        Write-Host 'Packaged Jarvis GUI bootstrap verification passed on hosted runner.'
+        Write-Host 'Hosted runners do not provide a reliable interactive desktop for HWND lifecycle assertions; interactive lifecycle is verified by running this script without -HostedRunner on an interactive Windows session.'
+        return
+    }
+
     $deadline = (Get-Date).AddSeconds(90)
     while ((Get-Date) -lt $deadline) {
         if ($process.HasExited) {
