@@ -110,6 +110,17 @@ jobs:
           $log = Get-Content build/windows/jarvis.log -Raw
           if ($log -notmatch "Jarvis smoke test passed") { throw "Packaged smoke test did not report success" }
 
+      - name: Ensure Microsoft Edge WebView2 Runtime
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP "MicrosoftEdgeWebview2Setup.exe"
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?linkid=2124703" -OutFile $installer
+          $installerProcess = Start-Process -FilePath $installer -ArgumentList "/silent", "/install" -Wait -PassThru
+          if ($installerProcess.ExitCode -ne 0) {
+            throw "WebView2 runtime installer failed with exit code $($installerProcess.ExitCode)"
+          }
+          Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
+
       - name: Exercise real packaged GUI lifecycle
         shell: pwsh
         run: ./packaging/windows/gui_smoke_test.ps1
