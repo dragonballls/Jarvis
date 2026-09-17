@@ -132,9 +132,15 @@ def parse_shared_location_payload(payload: dict, *, alias: str) -> Life360Locati
     if selected is None:
         raise ValueError("Life360 shared location payload did not contain coordinates")
 
-    member = next((item for item in _walk_dicts(payload) if _find_first(item, ("name", "displayName", "memberName"))), {})
+    member = next(
+        (item for item in _walk_dicts(payload) if _find_first(item, ("name", "displayName", "memberName"))),
+        {},
+    )
     latitude = _coerce_coordinate(_find_first(selected, ("latitude", "lat")), "latitude", -90.0, 90.0)
     longitude = _coerce_coordinate(_find_first(selected, ("longitude", "lon", "lng")), "longitude", -180.0, 180.0)
+    battery = _find_first(selected, ("battery", "batteryLevel", "battery_pct", "batteryPercent"))
+    if battery is None:
+        battery = _find_first(member, ("battery", "batteryLevel", "battery_pct", "batteryPercent"))
 
     return Life360Location(
         alias=safe_alias,
@@ -142,9 +148,7 @@ def parse_shared_location_payload(payload: dict, *, alias: str) -> Life360Locati
         longitude=longitude,
         name=str(_find_first(member, ("name", "displayName", "memberName")) or "").strip() or None,
         accuracy_m=_coerce_accuracy(_find_first(selected, ("accuracy", "accuracy_m", "accuracyMeters"))),
-        battery_pct=_coerce_battery(
-            _find_first(selected, ("battery", "batteryLevel", "battery_pct", "batteryPercent"))
-        ),
+        battery_pct=_coerce_battery(battery),
         updated_at=str(
             _find_first(selected, ("updatedAt", "updated_at", "timestamp", "lastUpdated")) or ""
         ).strip()
@@ -161,7 +165,7 @@ def _extract_json_scripts(html: str) -> list[dict]:
     ):
         try:
             parsed = json.loads(block.strip())
-        except (TypeError, ValueError, json.JSONDecodeError):
+        except (TypeError, ValueError):
             continue
         if isinstance(parsed, dict):
             result.append(parsed)
@@ -180,11 +184,17 @@ def extract_location_from_html(html: str, *, alias: str) -> Life360Location:
         lat = re.search(r"(?:data-)?latitude\s*=\s*[\"'](-?\d+(?:\.\d+)?)[\"']", tag, re.I)
         lon = re.search(r"(?:data-)?longitude\s*=\s*[\"'](-?\d+(?:\.\d+)?)[\"']", tag, re.I)
         if lat and lon:
+            battery_match = re.search(
+                r"(?:data-)?battery(?:-percent)?\s*=\s*[\"']([^\"']+)", tag, re.I
+            )
+            updated_match = re.search(
+                r"(?:data-)?(?:updated-at|last-updated)\s*=\s*[\"']([^\"']+)", tag, re.I
+            )
             payload = {
                 "latitude": lat.group(1),
                 "longitude": lon.group(1),
-                "battery": (re.search(r"(?:data-)?battery(?:-percent)?\s*=\s*[\"']([^\"']+)", tag, re.I) or [None, None])[1],
-                "updatedAt": (re.search(r"(?:data-)?(?:updated-at|last-updated)\s*=\s*[\"']([^\"']+)", tag, re.I) or [None, None])[1],
+                "battery": battery_match.group(1) if battery_match else None,
+                "updatedAt": updated_match.group(1) if updated_match else None,
             }
             return parse_shared_location_payload(payload, alias=alias)
 
