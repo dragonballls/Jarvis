@@ -11,8 +11,10 @@ Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
 
 $smokeHome = Join-Path ([System.IO.Path]::GetTempPath()) ("Jarvis-Gui-Smoke-" + [guid]::NewGuid().ToString('N'))
 $selfCodingHome = Join-Path $smokeHome 'Jarvis-SelfCoding-Workspace'
+$webviewDataHome = Join-Path $smokeHome 'WebView2'
 New-Item -ItemType Directory -Path (Join-Path $selfCodingHome '.git') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $selfCodingHome 'agent') -Force | Out-Null
+New-Item -ItemType Directory -Path $webviewDataHome -Force | Out-Null
 
 Add-Type @'
 using System;
@@ -86,9 +88,9 @@ function Get-JarvisWindowHandle([System.Diagnostics.Process] $process) {
 if ($env:GITHUB_WORKSPACE -and (Test-Path -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'desktop\dist\index.html'))) {
     $env:JARVIS_WORKSPACE = $env:GITHUB_WORKSPACE
 }
-$env:USERPROFILE = $smokeHome
-$env:HOME = $smokeHome
+$env:JARVIS_SELF_CODING_WORKSPACE = $selfCodingHome
 $env:JARVIS_SMOKE_TEST = '1'
+$env:WEBVIEW2_USER_DATA_FOLDER = $webviewDataHome
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--disable-gpu'
 
 $process = Start-Process -FilePath $exe -WorkingDirectory $build -PassThru
