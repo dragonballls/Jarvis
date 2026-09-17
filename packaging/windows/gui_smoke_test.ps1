@@ -89,7 +89,6 @@ if ($env:GITHUB_WORKSPACE -and (Test-Path -LiteralPath (Join-Path $env:GITHUB_WO
     $env:JARVIS_WORKSPACE = $env:GITHUB_WORKSPACE
 }
 $env:JARVIS_SELF_CODING_WORKSPACE = $selfCodingHome
-$env:JARVIS_SMOKE_TEST = '1'
 $env:WEBVIEW2_USER_DATA_FOLDER = $webviewDataHome
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--disable-gpu'
 
