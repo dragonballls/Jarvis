@@ -84,3 +84,11 @@ class Life360Service:
     def get_cached(self, alias: str) -> Life360Location | None:
         member = self._members.get(alias.strip())
         return member.location if member else None
+
+
+_default_service = Life360Service()
+
+
+def get_family_location_service() -> Life360Service:
+    """Return the process-local service shared by the API and built-in tools."""
+    return _default_service
