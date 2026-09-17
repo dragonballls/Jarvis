@@ -34,6 +34,7 @@ on:
       - "self_coding/**"
       - "packaging/windows/**"
       - ".github/workflows/windows-app.yml"
+      - ".github/workflows/windows-gui.yml"
 
 permissions:
   contents: write
@@ -121,7 +122,7 @@ jobs:
           }
           Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
 
-      - name: Exercise real packaged GUI lifecycle
+      - name: Verify packaged GUI path on hosted runner
         shell: pwsh
         run: ./packaging/windows/gui_smoke_test.ps1
 
