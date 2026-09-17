@@ -44,7 +44,6 @@ class Life360Service:
                     "alias": member.alias,
                     "has_shared_link": True,
                     "has_location": member.location is not None,
-                    "updated_at": member.location.updated_at if member.location else None,
                 }
                 for member in self._members.values()
             ],
