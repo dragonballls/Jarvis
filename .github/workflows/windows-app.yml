@@ -18,6 +18,23 @@ on:
       - "self_coding/**"
       - "packaging/windows/**"
       - ".github/workflows/windows-app.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "desktop/**"
+      - "core/**"
+      - "agent/**"
+      - "providers/**"
+      - "config/**"
+      - "integrations/**"
+      - "plugins/**"
+      - "scripts/**"
+      - "requirements.txt"
+      - "self_coding/**"
+      - "packaging/windows/**"
+      - ".github/workflows/windows-app.yml"
+      - ".github/workflows/windows-gui.yml"
 
 permissions:
   contents: write
@@ -83,7 +100,7 @@ jobs:
           $actual = (Get-Content build/windows/VERSION -Raw).Trim()
           if ($actual -ne $expected) { throw "VERSION mismatch: expected $expected but found $actual" }
 
-      - name: Smoke-test packaged executable
+      - name: Smoke-test packaged executable internals
         shell: pwsh
         run: python packaging/windows/smoke_test.py
 
@@ -94,6 +111,21 @@ jobs:
           $log = Get-Content build/windows/jarvis.log -Raw
           if ($log -notmatch "Jarvis smoke test passed") { throw "Packaged smoke test did not report success" }
 
+      - name: Ensure Microsoft Edge WebView2 Runtime
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP "MicrosoftEdgeWebview2Setup.exe"
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?linkid=2124703" -OutFile $installer
+          $installerProcess = Start-Process -FilePath $installer -ArgumentList "/silent", "/install" -Wait -PassThru
+          if ($installerProcess.ExitCode -ne 0) {
+            throw "WebView2 runtime installer failed with exit code $($installerProcess.ExitCode)"
+          }
+          Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
+
+      - name: Verify packaged GUI path on hosted runner
+        shell: pwsh
+        run: ./packaging/windows/gui_smoke_test.ps1 -HostedRunner
+
       - name: Upload single-file Windows app
         uses: actions/upload-artifact@v4
         with:
@@ -103,6 +135,7 @@ jobs:
           retention-days: 30
 
       - name: Publish rolling Windows update
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}

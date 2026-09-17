@@ -1,4 +1,4 @@
-"""Minimal local API for Jarvis: conversation, self-coding, provider settings, and voice."""
+"""Minimal local API for Jarvis: conversation, self-coding, provider settings, voice, and family location."""
 
 import argparse
 import asyncio
@@ -17,7 +17,9 @@ from quart_cors import cors
 from agent.core import Agent
 from agent.evolution import run_evolution_cycle
 from agent.self_coding_runtime import is_self_coding_goal
+from core.registry import discover_plugins
 from desktop.provider_credentials import PROVIDERS, delete_key, get_key, public_status, save_key
+from integrations.life360 import get_family_location_service
 
 API_PREFIX = "/api/v1"
 MINIMAL_MODE = True
@@ -98,8 +100,6 @@ def _prepare_tts_text(text: str, model_id: str | None = None) -> str:
     for pattern, replacement in replacements.items():
         value = re.sub(pattern, replacement, value)
     value = re.sub(r"\s*[;]\s*", "; ", value)
-    # Eleven v3 Conversational accepts natural-language audio tags. Keep them sparse so
-    # the assistant stays composed rather than sounding theatrically over-directed.
     if model_id == "eleven_v3_conversational":
         lowered = value.lower()
         if any(marker in lowered for marker in ("warning:", "critical:", "danger:", "error:")):
@@ -110,8 +110,18 @@ def _prepare_tts_text(text: str, model_id: str | None = None) -> str:
 
 
 app = Quart(__name__)
-app = cors(app, allow_origin={"http://localhost:5173", "http://127.0.0.1:5173"}, allow_methods={"GET", "POST", "DELETE", "OPTIONS"}, allow_headers={"Content-Type", "X-API-Key"}, allow_credentials=True)
+app = cors(
+    app,
+    allow_origin={"http://localhost:5173", "http://127.0.0.1:5173"},
+    allow_methods={"GET", "POST", "DELETE", "OPTIONS"},
+    allow_headers={"Content-Type", "X-API-Key"},
+    allow_credentials=True,
+)
 _agents: dict[str, Agent] = {}
+
+# The packaged API server is the runtime entry point, so it must initialize the
+# same built-in tool registry that the CLI startup path initializes.
+discover_plugins()
 
 
 def get_agent(session_id: str = "default") -> Agent:
@@ -124,8 +134,23 @@ def get_agent(session_id: str = "default") -> Agent:
 async def reject_non_core_api():
     if request.method == "OPTIONS":
         return None
-    allowed = {f"{API_PREFIX}/chat", f"{API_PREFIX}/autopilot", f"{API_PREFIX}/health", f"{API_PREFIX}/providers", f"{API_PREFIX}/providers/test", f"{API_PREFIX}/voice/status", f"{API_PREFIX}/voice/synthesize"}
-    if request.path.startswith(API_PREFIX) and request.path not in allowed and not request.path.startswith(f"{API_PREFIX}/providers/"):
+    allowed = {
+        f"{API_PREFIX}/chat",
+        f"{API_PREFIX}/autopilot",
+        f"{API_PREFIX}/health",
+        f"{API_PREFIX}/providers",
+        f"{API_PREFIX}/providers/test",
+        f"{API_PREFIX}/voice/status",
+        f"{API_PREFIX}/voice/synthesize",
+        f"{API_PREFIX}/family/location",
+        f"{API_PREFIX}/family/location/configure",
+    }
+    if (
+        request.path.startswith(API_PREFIX)
+        and request.path not in allowed
+        and not request.path.startswith(f"{API_PREFIX}/providers/")
+        and not request.path.startswith(f"{API_PREFIX}/family/location/")
+    ):
         return jsonify({"error": "Disabled in minimal Jarvis mode"}), 404
     return None
 
@@ -146,14 +171,19 @@ async def chat():
         queue: asyncio.Queue = asyncio.Queue()
         import concurrent.futures
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+
         def run_agent():
             try:
                 for event in agent.run(user_input):
                     loop.call_soon_threadsafe(queue.put_nowait, event)
             except Exception as exc:
-                loop.call_soon_threadsafe(queue.put_nowait, {"type": "done", "content": f"Error: {exc}", "final": True})
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    {"type": "done", "content": f"Error: {exc}", "final": True},
+                )
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)
+
         executor.submit(run_agent)
         try:
             while True:
@@ -163,6 +193,7 @@ async def chat():
                 yield json.dumps(event, ensure_ascii=False) + "\n"
         finally:
             executor.shutdown(wait=False)
+
     response = await make_response(generate())
     response.headers["Content-Type"] = "text/event-stream; charset=utf-8"
     response.headers["Cache-Control"] = "no-cache"
@@ -190,6 +221,7 @@ async def autopilot():
         queue: asyncio.Queue = asyncio.Queue()
         import concurrent.futures
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+
         def run_agent():
             try:
                 if is_self_coding_goal(goal):
@@ -202,9 +234,13 @@ async def autopilot():
                 for event in events:
                     loop.call_soon_threadsafe(queue.put_nowait, event)
             except Exception as exc:
-                loop.call_soon_threadsafe(queue.put_nowait, {"type": "done", "content": f"Self-coding error: {exc}", "final": True})
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    {"type": "done", "content": f"Self-coding error: {exc}", "final": True},
+                )
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)
+
         executor.submit(run_agent)
         try:
             while True:
@@ -214,6 +250,7 @@ async def autopilot():
                 yield json.dumps(event, ensure_ascii=False) + "\n"
         finally:
             executor.shutdown(wait=False)
+
     response = await make_response(generate())
     response.headers["Content-Type"] = "text/event-stream; charset=utf-8"
     response.headers["Cache-Control"] = "no-cache"
@@ -334,7 +371,12 @@ async def voice_synthesize():
         }
         payload = json.dumps({"text": prepared_text, "model_id": model_id, "voice_settings": voice_settings}).encode("utf-8")
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{urllib.parse.quote(_tts_voice_id(), safe='')}?output_format=mp3_44100_128"
-        req = urllib.request.Request(url, data=payload, method="POST", headers={"xi-api-key": api_key, "Content-Type": "application/json", "Accept": "audio/mpeg"})
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            method="POST",
+            headers={"xi-api-key": api_key, "Content-Type": "application/json", "Accept": "audio/mpeg"},
+        )
         try:
             with urllib.request.urlopen(req, timeout=30) as upstream:
                 audio = upstream.read()
@@ -353,7 +395,6 @@ async def voice_synthesize():
             except Exception:
                 detail = "ElevenLabs request failed"
             last_detail = detail[:500]
-            # A model/voice capability error should automatically recover to Flash 2.5.
             if index == 0 and exc.code not in {400, 404, 405, 415, 422}:
                 return jsonify({"error": last_detail}), 502
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
@@ -362,10 +403,74 @@ async def voice_synthesize():
     return jsonify({"error": last_detail}), 502
 
 
+@app.route(f"{API_PREFIX}/family/location", methods=["GET"])
+@require_auth
+async def family_location_status():
+    return jsonify(get_family_location_service().status())
+
+
+@app.route(f"{API_PREFIX}/family/location/configure", methods=["POST"])
+@require_auth
+async def family_location_configure():
+    data = await request.get_json() or {}
+    alias = str(data.get("alias", "")).strip()
+    share_url = str(data.get("share_url", "")).strip()
+    if not alias or not share_url:
+        return jsonify({"error": "alias and share_url are required"}), 422
+    try:
+        return jsonify(get_family_location_service().add_shared_link(alias, share_url))
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 422
+
+
+@app.route(f"{API_PREFIX}/family/location/<alias>/refresh", methods=["POST"])
+@require_auth
+async def family_location_refresh(alias: str):
+    try:
+        location = get_family_location_service().refresh(alias)
+        return jsonify({"success": True, "location": location.as_dict()})
+    except KeyError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except (TypeError, ValueError, OSError, RuntimeError) as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
+@app.route(f"{API_PREFIX}/family/location/<alias>/track", methods=["POST"])
+@require_auth
+async def family_location_track(alias: str):
+    try:
+        return jsonify(get_family_location_service().track(alias))
+    except KeyError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except (TypeError, ValueError, OSError, RuntimeError) as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
+@app.route(f"{API_PREFIX}/family/location/<alias>", methods=["DELETE"])
+@require_auth
+async def family_location_remove(alias: str):
+    removed = get_family_location_service().remove(alias)
+    return jsonify({"success": removed, "alias": alias, "removed": removed})
+
+
 @app.route(f"{API_PREFIX}/health")
 async def health():
     from agent.openhands_runtime import openhands_available
-    return jsonify({"status": "ok", "mode": "minimal", "features": ["conversation", "self_coding", "provider_settings", "voice", "openhands", "emrg_evolution"], "engines": {"openhands": openhands_available(), "opencode": True}, "name": "Jarvis"})
+    return jsonify({
+        "status": "ok",
+        "mode": "minimal",
+        "features": [
+            "conversation",
+            "self_coding",
+            "provider_settings",
+            "voice",
+            "openhands",
+            "emrg_evolution",
+            "family_location",
+        ],
+        "engines": {"openhands": openhands_available(), "opencode": True},
+        "name": "Jarvis",
+    })
 
 
 if __name__ == "__main__":
