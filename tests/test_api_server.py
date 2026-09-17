@@ -44,7 +44,14 @@ class TestHealth:
         assert resp.status_code == 200
         assert data["status"] == "ok"
         assert data["mode"] == "minimal"
-        assert data["features"] == ["conversation", "self_coding"]
+        assert data["features"] == [
+            "conversation",
+            "self_coding",
+            "provider_settings",
+            "voice",
+            "openhands",
+            "emrg_evolution",
+        ]
         assert data["name"] == "Jarvis"
 
     async def test_health_does_not_require_auth(self, app):
