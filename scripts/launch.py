@@ -23,6 +23,7 @@ STARTUP_TASK_NAME = "Jarvis UI"
 LEGACY_STARTUP_TASK_NAME = "Friday UI"
 STARTUP_RETRY_DELAY = 5
 MAX_STARTUP_RETRY_DELAY = 30
+JARVIS_URL = "http://127.0.0.1:5173/"
 
 
 def _log(message: str) -> None:
@@ -40,7 +41,6 @@ def print_colored(text: str, color_code: str = "37") -> None:
 def _ensure_windows_startup_task() -> None:
     if sys.platform != "win32":
         return
-    # Remove the previous Friday task if it exists; failure is harmless.
     subprocess.run(["schtasks", "/Delete", "/TN", LEGACY_STARTUP_TASK_NAME, "/F"], capture_output=True, text=True, timeout=30, check=False)
     task_command = subprocess.list2cmdline([sys.executable, str(Path(__file__).resolve()), "--ui", "--startup"])
     result = subprocess.run(
@@ -192,10 +192,40 @@ def _start_ui_processes(desktop: str) -> list[subprocess.Popen]:
         raise
 
 
+def _find_edge_app() -> str | None:
+    """Locate Microsoft Edge so Jarvis gets its own app window on Windows."""
+    candidates = [
+        shutil.which("msedge.exe"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\Application\msedge.exe"),
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
 def _open_ui_browser():
-    url = "http://127.0.0.1:5173/"
-    print_colored(f"Jarvis UI ready — opening {url}", "32")
-    webbrowser.open(url)
+    """Open Jarvis as a dedicated app window without browser chrome."""
+    if sys.platform == "win32":
+        edge = _find_edge_app()
+        if edge:
+            args = [
+                edge,
+                f"--app={JARVIS_URL}",
+                "--new-window",
+                "--disable-background-timer-throttling",
+                "--disable-renderer-backgrounding",
+                "--disable-backgrounding-occluded-windows",
+            ]
+            env = os.environ.copy()
+            env["JARVIS_APP_WINDOW"] = "1"
+            subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True, env=env)
+            print_colored(f"Jarvis app window ready — opening {JARVIS_URL}", "32")
+            return
+    print_colored(f"Jarvis UI ready — opening {JARVIS_URL}", "32")
+    webbrowser.open(JARVIS_URL)
 
 
 def _recover_dead_processes(procs: list[subprocess.Popen], desktop: str) -> None:
